@@ -1,6 +1,6 @@
 {
   "name": "@jeffjassky/oauth-host",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "OAuth 2.1 + OIDC authorization server for Express/Mongoose apps.",
   "license": "MIT",
   "author": "Jeff Jassky <jeff@jeffjassky.com>",

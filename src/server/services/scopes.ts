@@ -55,6 +55,45 @@ export function validateScopes(
 }
 
 /**
+ * What `/authorize` grants when the request carried no `scope` at all.
+ *
+ * RFC 6749 §3.3 makes `scope` optional and says the server defines the
+ * fallback, so this is policy rather than protocol — and the obvious policy,
+ * "fall back to the client's `allowedScopes`", is the wrong one. That list is a
+ * registration CEILING: a client is registered for everything it may ever ask
+ * for, often the whole catalog, and collapsing the ceiling into the default
+ * means omitting one parameter silently grants all of it. The two lists answer
+ * different questions and must stay different lists.
+ *
+ * The configured defaults are still intersected with the ceiling — a default
+ * must never exceed what the client is registered for — and an empty
+ * intersection is an error, because a grant of nothing is a token that can do
+ * nothing and a consent screen that asks the user to approve nothing.
+ *
+ * No catalog check here: `resolveConfig` proved every entry at boot, and
+ * re-deriving that per request is how the two answers drift.
+ */
+export function resolveDefaultScopes(ctx: ResolvedContext, client: OAuthClientDoc): string[] {
+  if (!ctx.defaultScopes) {
+    throw invalidScope(
+      'no `scope` was requested and no `defaultScopes` is configured. Send `scope` on '
+      + '/authorize, or configure `defaultScopes` on createOAuthHost — an empty scope set '
+      + 'would issue a token that can do nothing.',
+    );
+  }
+  const allowed = new Set(client.allowedScopes);
+  const granted = ctx.defaultScopes.filter((id) => allowed.has(id));
+  if (granted.length === 0) {
+    throw invalidScope(
+      `no \`scope\` was requested and client '${client.clientId}' is allowed none of the `
+      + `configured defaultScopes (${ctx.defaultScopes.join(' ')}). Send \`scope\` explicitly, `
+      + "or add one of those scopes to the client's allowedScopes.",
+    );
+  }
+  return granted;
+}
+
+/**
  * The scope half of the consent payload (plan §8) — a versioned UI contract.
  *
  * Only catalog-visible fields cross this line. `isNew` is the one derived bit:

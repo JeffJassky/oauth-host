@@ -1,7 +1,7 @@
 import { randomToken } from '../crypto.js';
 import { OAuthError, RedirectableAuthError, UnredirectableError } from '../errors.js';
 import { isMetadataUrl, resolveCimdClient } from './cimd.js';
-import { parseScope, validateResources, validateScopes } from './scopes.js';
+import { parseScope, resolveDefaultScopes, validateResources, validateScopes } from './scopes.js';
 import type { ResolvedContext } from '../config.js';
 import type { OAuthClientDoc, OAuthRequestDoc, PackageUser } from '../../../types/index.js';
 
@@ -136,7 +136,13 @@ export async function validateAuthorizationRequest(
   let scopes: string[];
   let resources: string[];
   try {
-    scopes = validateScopes(ctx, parseScope(one(query, 'scope')), client);
+    // An absent or empty `scope` takes the configured default rather than an
+    // empty set — RFC 6749 §3.3 leaves the fallback to us, and "granted
+    // nothing" is a dead end the integrator only discovers at the first 403.
+    const requested = parseScope(one(query, 'scope'));
+    scopes = requested.length
+      ? validateScopes(ctx, requested, client)
+      : resolveDefaultScopes(ctx, client);
     resources = validateResources(ctx, many(query, 'resource'), client);
   } catch (err) {
     // The scope/resource validators are shared with the token endpoint, where

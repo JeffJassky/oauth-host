@@ -271,6 +271,23 @@ export interface CreateOAuthHostConfig {
   scopes: (ScopeSpec | string)[];
 
   /**
+   * What `/authorize` grants when the request omits `scope`. RFC 6749 §3.3
+   * makes the parameter optional and leaves the fallback to the server.
+   *
+   * Deliberately NOT the client's `allowedScopes`. That list is a registration
+   * ceiling — everything the client may ever ask for — and making it double as
+   * the default hands a broadly registered client the whole catalog the moment
+   * it drops one parameter. The two lists answer different questions.
+   *
+   * Always intersected with the client's `allowedScopes`, so a default can
+   * never exceed a registration. Every entry must be in the catalog, and an
+   * empty array is a boot error: omit the key instead. Omitted, a `scope`-less
+   * `/authorize` is an `invalid_scope` error naming both ways to fix it —
+   * an empty grant would be a token that can do nothing.
+   */
+  defaultScopes?: string[];
+
+  /**
    * Where `/authorize` sends a signed-in user to approve. The package appends
    * `?request_id=…`; the host's page fetches the consent JSON with it.
    */

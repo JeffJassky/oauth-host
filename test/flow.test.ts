@@ -449,3 +449,76 @@ describe('profile claims without a session', () => {
     expect([200, 401]).toContain(res.status);
   });
 });
+
+/**
+ * Discovery when the issuer carries a path — RFC 8414 §3.1.
+ *
+ * Every other test in this file uses a bare-origin issuer, and a bare origin is
+ * exactly the case where the inserted-path transformation is invisible: both
+ * specs collapse onto the same fixed path, and a server that ignores the rule
+ * still looks correct. A host whose issuer is `https://auth.test/api` was
+ * undiscoverable to a spec-following client until these existed.
+ */
+describe('discovery for an issuer with a path component', () => {
+  const PATH_ISSUER = 'https://auth.test/api';
+  let built: BuiltApp;
+
+  beforeEach(async () => {
+    await clearDb();
+    built = await buildApp({ config: { issuer: PATH_ISSUER } });
+  });
+
+  it('serves authorization-server metadata at the RFC 8414 inserted-path alias', async () => {
+    // §3.1 inserts the well-known segment BETWEEN host and path. Appending it
+    // is the other spec's rule (see below) and would 404 here.
+    const alias = await request(built.app).get('/.well-known/oauth-authorization-server/api');
+    expect(alias.status).toBe(200);
+    expect(alias.body.issuer).toBe(PATH_ISSUER);
+    expect(alias.body.token_endpoint).toBe(`${PATH_ISSUER}/oauth/token`);
+
+    // The fixed path keeps working: it is what a client that ignores the
+    // transformation asks for, and dropping it would break the clients that
+    // already work.
+    const fixed = await request(built.app).get('/.well-known/oauth-authorization-server');
+    expect(fixed.body).toEqual(alias.body);
+  });
+
+  it('answers both well-known placements for openid-configuration, byte for byte', async () => {
+    // RFC 8414 §3.1 inserts, OpenID Connect Discovery 1.0 §4.1 appends, for the
+    // identical document. RFC 8414 §5 names the disagreement, so serving one
+    // and not the other loses whichever half of the client population picked
+    // the other reading.
+    const inserted = await request(built.app).get('/.well-known/openid-configuration/api');
+    const appended = await request(built.app).get('/api/.well-known/openid-configuration');
+    const rfc8414 = await request(built.app).get('/.well-known/oauth-authorization-server/api');
+
+    expect(inserted.status).toBe(200);
+    expect(appended.status).toBe(200);
+    expect(inserted.body).toEqual(rfc8414.body);
+    expect(appended.body).toEqual(rfc8414.body);
+  });
+
+  it('404s a well-known path that is not this issuer instead of serving the document anyway', async () => {
+    for (const path of [
+      '/.well-known/oauth-authorization-server/other',
+      '/.well-known/openid-configuration/other',
+    ]) {
+      const res = await request(built.app).get(path);
+      expect(res.status).toBe(404);
+      expect(res.headers['content-type']).toMatch(/json/);
+      // Naming the real issuer is the whole point — the integrator's next move
+      // is to compare it against what they configured.
+      expect(res.body.error_description).toContain(PATH_ISSUER);
+    }
+  });
+
+  it('does not invent a path alias for a bare-origin issuer', async () => {
+    // `https://auth.test` publishes at the unsuffixed path and nowhere else. A
+    // suffix matcher that fell through to the bare document would hand a client
+    // metadata for a server it did not ask about.
+    const bare = await buildApp();
+    const res = await request(bare.app).get('/.well-known/oauth-authorization-server/api');
+    expect(res.status).toBe(404);
+    expect(res.headers['content-type']).toMatch(/json/);
+  });
+});

@@ -240,6 +240,83 @@ describe('validateAuthorizationRequest — the redirect boundary', () => {
   });
 });
 
+describe('defaultScopes — the zero-scope dead end', () => {
+  it('refuses a scope-less request rather than granting nothing', async () => {
+    // The bug this replaces was silent: no `scope` used to mean an empty set,
+    // so the user consented to nothing and the token could do nothing.
+    const ctx = buildContext();
+    const client = await makeClient(ctx);
+    const err = await validateAuthorizationRequest(
+      ctx,
+      query({ client_id: client.clientId, scope: undefined }),
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RedirectableAuthError);
+    expect((err as RedirectableAuthError).code).toBe('invalid_scope');
+    // Both fixes named, because the integrator can only apply one of them.
+    expect((err as RedirectableAuthError).description).toContain('defaultScopes');
+    expect((err as RedirectableAuthError).description).toContain('`scope`');
+  });
+
+  it('falls back to defaultScopes, never to the client allowedScopes', async () => {
+    // The client is registered for three scopes — everything it may ever ask
+    // for. If the ceiling were the default, omitting one parameter would grant
+    // all three.
+    const ctx = buildContext({ defaultScopes: ['openid'] });
+    const client = await makeClient(ctx);
+    const validated = await validateAuthorizationRequest(
+      ctx,
+      query({ client_id: client.clientId, scope: undefined }),
+    );
+    expect(validated.scopes).toEqual(['openid']);
+  });
+
+  it('treats an empty scope parameter the same as an absent one', async () => {
+    const ctx = buildContext({ defaultScopes: ['openid', 'contacts.read'] });
+    const client = await makeClient(ctx);
+    const validated = await validateAuthorizationRequest(
+      ctx,
+      query({ client_id: client.clientId, scope: '   ' }),
+    );
+    expect(validated.scopes).toEqual(['openid', 'contacts.read']);
+  });
+
+  it('never lets a default exceed what the client is registered for', async () => {
+    // `contacts.write` is in the catalog and in the host's defaults, but this
+    // client was never registered for it. A default that widened a
+    // registration would be a grant nobody authorized.
+    const ctx = buildContext({ defaultScopes: ['openid', 'contacts.write'] });
+    const client = await makeClient(ctx);
+    const validated = await validateAuthorizationRequest(
+      ctx,
+      query({ client_id: client.clientId, scope: undefined }),
+    );
+    expect(validated.scopes).toEqual(['openid']);
+  });
+
+  it('refuses an empty intersection instead of issuing an empty grant', async () => {
+    const ctx = buildContext({ defaultScopes: ['contacts.write'] });
+    const client = await makeClient(ctx);
+    const err = await validateAuthorizationRequest(
+      ctx,
+      query({ client_id: client.clientId, scope: undefined }),
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RedirectableAuthError);
+    expect((err as RedirectableAuthError).code).toBe('invalid_scope');
+    expect((err as RedirectableAuthError).description).toContain('contacts.write');
+  });
+
+  it('fails at boot on a defaultScope that is not in the catalog, naming it', () => {
+    expect(() => buildContext({ defaultScopes: ['openid', 'billing.read'] }))
+      .toThrow(/billing\.read/);
+  });
+
+  it('fails at boot on an empty defaultScopes rather than defaulting to nothing', () => {
+    // `[]` reads as "default to no scopes", which is the dead end the key
+    // exists to remove. Omitting the key is the way to require `scope`.
+    expect(() => buildContext({ defaultScopes: [] })).toThrow(/defaultScopes/);
+  });
+});
+
 describe('redirect helpers', () => {
   it('merges request_id into a consentUrl that already has a query', () => {
     const ctx = buildContext();

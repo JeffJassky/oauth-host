@@ -102,6 +102,12 @@ export interface ResolvedContext {
   scopes: ScopeSpec[];
   /** `id` → spec. Every scope lookup goes through this, never a linear scan. */
   scopeIndex: Map<string, ScopeSpec>;
+  /**
+   * What a `scope`-less `/authorize` falls back to. Undefined means no
+   * fallback was configured, which is an error at request time rather than an
+   * empty grant — see `resolveDefaultScopes`.
+   */
+  defaultScopes?: string[];
   consentUrl: string;
   loginUrl?: string;
   returnParam: string;
@@ -224,6 +230,37 @@ function normalizeScopes(input: CreateOAuthHostConfig['scopes']): ScopeSpec[] {
       oidc: spec.oidc ?? OIDC_SCOPES.has(spec.id),
     };
   });
+}
+
+/**
+ * `defaultScopes`, checked against the catalog at boot.
+ *
+ * Undefined and empty are different things and only one of them is legal.
+ * Undefined means "no default", which makes a `scope`-less `/authorize` a loud
+ * error. An empty array would mean "default to nothing", which is the dead end
+ * this key exists to remove — so it is refused here by name rather than
+ * discovered as a token that can do nothing.
+ */
+function normalizeDefaultScopes(
+  input: CreateOAuthHostConfig['defaultScopes'],
+  scopeIndex: Map<string, ScopeSpec>,
+): string[] | undefined {
+  if (input === undefined) return undefined;
+  if (!Array.isArray(input) || input.length === 0) {
+    throw new TypeError(
+      'oauth-host: `defaultScopes`, when given, must be a non-empty array of catalog scope ids. '
+      + 'Omit the key entirely to require every client to send `scope`.',
+    );
+  }
+  for (const id of input) {
+    if (typeof id !== 'string' || !scopeIndex.has(id)) {
+      throw new TypeError(
+        `oauth-host: defaultScopes contains '${String(id)}', `
+        + 'which is not in the configured scope catalog',
+      );
+    }
+  }
+  return [...input];
 }
 
 function normalizeResources(input: CreateOAuthHostConfig['resources']): ResourceSpec[] {
@@ -455,6 +492,8 @@ export function resolveConfig(config: CreateOAuthHostConfig): ResolvedContext {
     }
   }
 
+  const defaultScopes = normalizeDefaultScopes(config.defaultScopes, scopeIndex);
+
   const models = createModels({
     connection,
     modelNames,
@@ -490,6 +529,7 @@ export function resolveConfig(config: CreateOAuthHostConfig): ResolvedContext {
     resources,
     scopes,
     scopeIndex,
+    defaultScopes,
     consentUrl,
     loginUrl,
     returnParam,

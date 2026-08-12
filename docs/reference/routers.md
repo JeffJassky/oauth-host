@@ -30,8 +30,9 @@ including 500s (`{"error": "server_error"}`).
 
 Mounted at the origin root. Public.
 
-### `GET /.well-known/oauth-authorization-server`
-### `GET /.well-known/openid-configuration`
+### `GET /.well-known/oauth-authorization-server[/<issuer path>]`
+### `GET /.well-known/openid-configuration[/<issuer path>]`
+### `GET /<issuer path>/.well-known/openid-configuration`
 
 RFC 8414 and OpenID Connect Discovery. **The same object** from both paths — one
 grant type, one signing algorithm, one set of endpoints, generated from one
@@ -62,6 +63,14 @@ Endpoint URLs are `issuer + mountPath + path`. `subject_types_supported`
 reflects `config.subjectMode`. `code_challenge_methods_supported` lists `S256`
 only — `plain` is implemented nowhere, so advertising it would be a lie a client
 discovers at redemption.
+
+**When `issuer` has a path component**, the aliases above are live and all
+return the identical document. RFC 8414 §3.1 *inserts* the well-known segment
+between the host and the issuer's path; OIDC Discovery §4.1 *appends* it. RFC
+8414 §5 names the disagreement, so both placements are served — see
+[MCP connectors](/guide/mcp#when-your-issuer-has-a-path). A path that is not
+your issuer is `404 {"error": "not_found"}`, never the document for a different
+server.
 
 ### `GET /.well-known/oauth-protected-resource[/<suffix>]`
 

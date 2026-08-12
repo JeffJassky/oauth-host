@@ -31,6 +31,7 @@ interface CreateOAuthHostConfig {
   mountPath?: string;                      // '/oauth'
   resources: ResourceSpec[];
   scopes: (ScopeSpec | string)[];
+  defaultScopes?: string[];                // fallback when /authorize omits `scope`
   consentUrl: string;
   loginUrl?: string;
   returnParam?: string;                    // 'next'

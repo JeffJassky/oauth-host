@@ -92,6 +92,29 @@ API never has to know suffixes exist.
 This is why `oauth.routes.discovery` must be mounted at the origin root. It is
 the one router in the package whose mount path you do not get to choose.
 
+### When your `issuer` has a path
+
+The same transformation applies to the issuer, and the two specs that describe
+it disagree about the direction. Both are served.
+
+| Your `issuer` | Document | Served at |
+|---|---|---|
+| `https://example.com` | RFC 8414 | `/.well-known/oauth-authorization-server` |
+| `https://example.com` | OIDC Discovery | `/.well-known/openid-configuration` |
+| `https://example.com/api` | RFC 8414 §3.1 | `/.well-known/oauth-authorization-server` **and** `/.well-known/oauth-authorization-server/api` |
+| `https://example.com/api` | OIDC Discovery §4.1 | `/.well-known/openid-configuration`, `/.well-known/openid-configuration/api`, **and** `/api/.well-known/openid-configuration` |
+
+RFC 8414 §3.1 **inserts** the well-known segment between the host and the
+issuer's path — the same rule as RFC 9728 above. OpenID Connect Discovery 1.0
+§4.1 **appends** it to the issuer instead. RFC 8414 §5 names the disagreement
+and says a deployment may have to answer both, so this package answers both
+rather than picking a winner and being undiscoverable to half the clients. Every
+one of those paths returns the byte-identical document.
+
+A path that is not your issuer is a `404` in JSON, not the document for a
+different server — `/.well-known/oauth-authorization-server/other` when your
+issuer is `…/api` answers `{"error":"not_found", …}` naming the real issuer.
+
 ## Audience binding
 
 MCP requires tokens to be bound to the resource they are for (RFC 8707), and
@@ -194,7 +217,10 @@ A checklist for the things that actually go wrong:
   session middleware that guards the rest of your app.
 - **The scopes you registered are the scopes the client asks for.** A scope in
   the catalog but not in the client's `allowedScopes` is a redirected
-  `invalid_scope` error, naming the scope.
+  `invalid_scope` error, naming the scope. A client that sends **no** `scope` at
+  all gets [`defaultScopes`](/guide/configuration#default-scopes) — never the
+  client's `allowedScopes`, which is a registration ceiling — and a redirected
+  `invalid_scope` error if you have not configured that key.
 - **You mounted `discovery` at the root and `oauth` at `mountPath`.** If the two
   disagree, `token_endpoint` in the metadata points at a 404.
 

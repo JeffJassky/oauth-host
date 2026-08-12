@@ -140,6 +140,14 @@ GET /oauth/authorize
 PKCE is mandatory and `S256` is the only accepted method — an omitted
 `code_challenge_method` is rejected rather than defaulting to `plain`.
 
+`scope` is optional per RFC 6749 §3.3, and what an omitted one means is yours to
+decide: it falls back to
+[`defaultScopes`](/guide/configuration#default-scopes), intersected with the
+client's `allowedScopes`. Configure that key or the request is a redirected
+`invalid_scope` error — an empty scope set would be a token that can do nothing.
+Note that it is deliberately *not* the client's `allowedScopes`; that list is a
+registration ceiling, not a request.
+
 What happens next:
 
 1. **Signed out?** 302 to `loginUrl` with the full return URL in `returnParam`

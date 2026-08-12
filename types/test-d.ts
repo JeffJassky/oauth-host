@@ -82,6 +82,13 @@ const shorthandScopes: CreateOAuthHostConfig = {
   scopes: ['openid', 'profile', 'email'],
 };
 
+// `defaultScopes` is optional and is plain scope ids — deliberately NOT a
+// `ScopeSpec[]`, so it cannot be mistaken for a second catalog.
+const withDefaultScopes: CreateOAuthHostConfig = {
+  ...minimal,
+  defaultScopes: ['openid', 'contacts.read'],
+};
+
 // ---------------------------------------------------------------------------
 // Adapters, both forms and both directions.
 // ---------------------------------------------------------------------------
@@ -298,6 +305,7 @@ void reqCtx.audience;
 
 void minimal;
 void shorthandScopes;
+void withDefaultScopes;
 void withFn;
 void withAdapter;
 void withLoad;

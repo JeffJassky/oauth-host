@@ -16,6 +16,35 @@ Where a spec says MUST, that is not a config key.
 | `scopes` | `(ScopeSpec \| string)[]` | The catalog. The consent endpoint's entire job is serving `label` / `description` / `sensitive` to your UI, which is why these are objects. A bare string is shorthand for `{ id, label: id }`. Ids may not contain whitespace or quotes — `scope` is space-delimited (RFC 6749 §3.3) and a space would make the whole parameter ambiguous. |
 | `consentUrl` | `string` | Where `/authorize` sends a signed-in user. The consent UI is yours by requirement. The package appends `?request_id=…`, merging correctly into a URL that already has a query. |
 
+## Default scopes
+
+| Key | Default | Why |
+|---|---|---|
+| `defaultScopes` | — | What `/authorize` grants when the request omits `scope`. RFC 6749 §3.3 makes the parameter optional and leaves the fallback to the server, so this is the one scope decision the specs hand to you. Entries must be in the catalog — a boot error otherwise, naming the offending value — and `[]` is a boot error too: omit the key instead. |
+
+**It is not the client's `allowedScopes`, and that is the point.** A
+registration lists everything a client may *ever* ask for, so it is routinely
+the whole catalog. If that ceiling doubled as the default, a client would
+silently receive every scope you have the moment it dropped one query
+parameter — the broadest possible grant, from the narrowest possible mistake.
+The registration ceiling and the default request answer different questions and
+have to stay different lists.
+
+Configured defaults are still **intersected with `allowedScopes`**: a default can
+never widen a registration. If that intersection is empty, the request fails —
+`invalid_scope`, naming the client and the defaults — rather than issuing an
+empty grant.
+
+With no `defaultScopes` configured, a `scope`-less `/authorize` is a
+redirected `invalid_scope` error naming both fixes: send `scope`, or configure
+this key. The alternative, and the behaviour this replaces, is a dead end that
+looks like success — the user is asked to consent to nothing, and the resulting
+token can do nothing until someone traces the first 403 back here.
+
+Nothing new is advertised in discovery. `scopes_supported` already carries the
+catalog, and a default is a property of this deployment's `/authorize`, not of
+the protocol a client negotiates.
+
 ## Mounting
 
 | Key | Default | Why |
