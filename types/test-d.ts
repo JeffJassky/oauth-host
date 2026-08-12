@@ -57,8 +57,35 @@ import type {
   UserId,
   UsersApi,
 } from './index.js';
+// Values, not types: the vendor constants are exported to be pasted into a
+// registration, so they have to be importable as such.
+import {
+  CHATGPT_CONNECTOR_REDIRECT_URI_PATTERN,
+  CHATGPT_LEGACY_REDIRECT_URI,
+  CIMD_ALLOWED_HOSTS,
+  CLAUDE_CODE_REDIRECT_URIS,
+  CLAUDE_CONNECTOR_REDIRECT_URI,
+} from './index.js';
 
 declare const oauth: OAuthHostInstance;
+
+// The registration a host actually writes. `CLAUDE_CODE_REDIRECT_URIS` and
+// `CIMD_ALLOWED_HOSTS` are readonly, so they spread rather than assign — which
+// is also how they get combined with the hosted callback in practice.
+const vendorClient: CreateClientSpec = {
+  name: 'Claude',
+  redirectUris: [CLAUDE_CONNECTOR_REDIRECT_URI, ...CLAUDE_CODE_REDIRECT_URIS],
+  allowedScopes: ['openid'],
+};
+const vendorCimd: ClientIdMetadataConfig = {
+  enabled: true,
+  allowedHosts: [...CIMD_ALLOWED_HOSTS],
+};
+// A pattern, not a value to register — exercised only so a rename is caught.
+void CHATGPT_CONNECTOR_REDIRECT_URI_PATTERN;
+void CHATGPT_LEGACY_REDIRECT_URI;
+void vendorClient;
+void vendorCimd;
 
 // ---------------------------------------------------------------------------
 // The degenerate case from plans/build-plan.md §0. If this ever stops
@@ -239,6 +266,11 @@ async function adminSurface(): Promise<void> {
   await contexts.revoked('u1', 'org_1');
 
   await oauth.syncIndexes();
+  // A boolean, not a promise — a host gates its own mount on it. If this ever
+  // becomes awaitable, a host that forgot `syncIndexes()` hangs instead of
+  // being told.
+  const ready: boolean = oauth.ready;
+  void ready;
   const models: OAuthModels = oauth.models;
   void models.Client;
   void models.Grant;

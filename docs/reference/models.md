@@ -31,6 +31,11 @@ Awaits `Model.init()` on all seven. **Call it at boot, before the first write.**
 Mongoose builds indexes in the background, and on a cold database that is exactly
 long enough for a write to land before the unique partial index on grants exists.
 
+Resolving it also flips `oauth.ready`. Until then the three routes that write —
+`/authorize`, `POST /consent/:requestId`, `POST /token` — answer `503
+server_error` naming this function, while the read-only surfaces keep serving.
+See [Data model](/guide/data-model#build-the-indexes-before-the-first-write).
+
 ## Reading them safely
 
 The models have no guards attached. Two things the admin API does that a direct

@@ -677,6 +677,18 @@ export interface OAuthHostInstance {
 
   /** Build every index. Await at boot, before the first write — traps #3. */
   syncIndexes(): Promise<void>;
+  /**
+   * True once `syncIndexes()` has resolved.
+   *
+   * A boolean rather than a promise on purpose: a promise would have to exist
+   * from construction, so a host that never calls `syncIndexes()` would await it
+   * forever and the mistake would present as a hang with no message. Until this
+   * is true, `/authorize`, `POST /consent/:requestId` and `POST /token` answer
+   * `server_error` naming `syncIndexes()`; discovery, `/jwks`, `/userinfo` and
+   * `protect()` keep serving, because taking a read-only API down would turn a
+   * boot-order mistake into an outage.
+   */
+  readonly ready: boolean;
   /** Escape hatch. Prefer the APIs above; these have no invariants attached. */
   models: OAuthModels;
 }
@@ -689,6 +701,49 @@ export declare function createModels(opts: {
   collectionPrefix?: string;
   auditRetentionDays?: number;
 }): OAuthModels;
+
+// ---------------------------------------------------------------------------
+// Vendor callback URLs
+// ---------------------------------------------------------------------------
+
+/**
+ * Callback URLs for the connectors people actually register, shipped as
+ * constants because `clients.create()` compares them byte-for-byte and
+ * retyping one out of a vendor's documentation is the most typo-prone step in
+ * the whole setup.
+ *
+ * **All of these are vendor product details, not standards.** They can change
+ * without notice and without a release of this package; each is stamped in the
+ * source with the date it was verified. See docs/guide/mcp.md.
+ */
+
+/** claude.ai's hosted connector callback. Verified 2026-08-12. */
+export declare const CLAUDE_CONNECTOR_REDIRECT_URI: string;
+
+/**
+ * Claude Code's local callbacks. Register both; the PORT varies per session and
+ * is allowed to (RFC 8252 §7.3), so register them WITHOUT one.
+ * Verified 2026-08-12.
+ */
+export declare const CLAUDE_CODE_REDIRECT_URIS: readonly string[];
+
+/** ChatGPT's legacy single connector callback. Verified 2026-08-12. */
+export declare const CHATGPT_LEGACY_REDIRECT_URI: string;
+
+/**
+ * The SHAPE of ChatGPT's current per-connector callback, not a value to
+ * register — `{callback_id}` is assigned when the connector is created and the
+ * only correct source for the full URL is the connector's own setup screen.
+ * Verified 2026-08-12.
+ */
+export declare const CHATGPT_CONNECTOR_REDIRECT_URI_PATTERN: string;
+
+/**
+ * A suggested `clientIdMetadata.allowedHosts` for both vendors. A suggestion,
+ * never a default — that key is the control that contains CIMD's SSRF surface.
+ * Verified 2026-08-12.
+ */
+export declare const CIMD_ALLOWED_HOSTS: readonly string[];
 
 export declare function defaultResolveUser(req: Request): PackageUser | null;
 export declare function createUserAdapter(opts?: {

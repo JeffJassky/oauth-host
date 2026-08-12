@@ -15,7 +15,7 @@ import {
   revokeToken,
   rotateRefresh,
 } from '../src/server/services/tokens.js';
-import type { CreateOAuthHostConfig, OAuthEvent } from '../types/index.js';
+import type { CreateOAuthHostConfig, OAuthEvent, PackageUser } from '../types/index.js';
 
 /**
  * The token core, tested before any HTTP exists — build plan §13 step 2.
@@ -420,6 +420,54 @@ describe('token core', () => {
     const grant = await ctx.models.Grant.findById(s.grantId);
     expect(grant!.revokedAt).toBeInstanceOf(Date);
     expect(await introspectAccessToken(ctx, second.accessToken)).toBeNull();
+  });
+
+  it('hands grantContext.verify the loaded user on refresh, not a bare { id }', async () => {
+    // The reported rule is "a member of this account OR an admin", and admins
+    // hold no membership row — so an id alone forces the host to re-read the
+    // same user from Mongo on every single refresh just to see a flag. The
+    // package already has `loadUser` and already calls it for /userinfo.
+    const seen: PackageUser[] = [];
+    const ctx = await makeCtx({
+      loadUser: (id) => ({ id, email: 'ada@example.test', displayName: 'Ada', isAdmin: true }),
+      grantContext: {
+        list: () => [{ id: 'org_1', label: 'Acme' }],
+        verify: (u) => {
+          seen.push(u);
+          return Boolean(u.isAdmin);
+        },
+      },
+    });
+    const s = await seed(ctx, { contextId: 'org_1' });
+    const first = await issueForCode(ctx, await redeem(ctx, s));
+    await rotateRefresh(ctx, first.refreshToken!, { clientId: s.clientId });
+
+    expect(seen).toHaveLength(1);
+    expect(String(seen[0]!.id)).toBe(String(s.userId));
+    expect(seen[0]!.email).toBe('ada@example.test');
+    expect(seen[0]!.isAdmin).toBe(true);
+  });
+
+  it('still calls grantContext.verify with { id } when no loadUser is configured', async () => {
+    // `loadUser` is optional and this path must not start requiring it —
+    // `ctx.loadUser` falls back to `{ id }`, so the contract is unchanged for a
+    // host that never configured one.
+    const seen: PackageUser[] = [];
+    const ctx = await makeCtx({
+      grantContext: {
+        list: () => [{ id: 'org_1', label: 'Acme' }],
+        verify: (u) => {
+          seen.push(u);
+          return true;
+        },
+      },
+    });
+    const s = await seed(ctx, { contextId: 'org_1' });
+    const first = await issueForCode(ctx, await redeem(ctx, s));
+    await rotateRefresh(ctx, first.refreshToken!, { clientId: s.clientId });
+
+    expect(String(seen[0]!.id)).toBe(String(s.userId));
+    expect(seen[0]!.email).toBeUndefined();
   });
 
   it('never calls grantContext.verify when the adapter is absent and contextId is null', async () => {

@@ -69,6 +69,29 @@ database will happily serve the write that violates the unique partial index on
 grants — which is exactly long enough for one user to end up with two live
 grants for one client. Await this at boot.
 
+**The package enforces this rather than trusting it.** Until `syncIndexes()`
+resolves, the three routes that write — `/authorize`, `POST /consent/:requestId`
+and `POST /token` — answer `503 { "error": "server_error" }` with a description
+naming `syncIndexes()`. Read-only surfaces keep serving: discovery, `/jwks`,
+`/userinfo` and `protect()` create nothing an index could be violated by, and
+taking them down would turn a boot-order mistake into a total outage.
+
+`oauth.ready` is the boolean, so a host can gate its own mount:
+
+```ts
+await oauth.syncIndexes();          // then mount
+// or, if the mount already happened:
+if (!oauth.ready) throw new Error('oauth-host: syncIndexes() has not resolved');
+```
+
+A boolean rather than a promise on purpose: a promise would have to exist from
+construction, so forgetting to call `syncIndexes()` at all would present as an
+`await` that never settles instead of a value that is plainly `false`.
+
+Calling it inside your `app.listen` callback is the common mistake — the routers
+are mounted by then, so there is a window. The gate closes that window; awaiting
+it *before* `app.use` removes it.
+
 ## 3. Mount both routers
 
 ```ts
@@ -100,9 +123,15 @@ Once, from a script or your own admin route. There is no dynamic client
 registration.
 
 ```ts
+import {
+  createOAuthHost,
+  CLAUDE_CONNECTOR_REDIRECT_URI,
+  CLAUDE_CODE_REDIRECT_URIS,
+} from '@jeffjassky/oauth-host';
+
 const { clientId, clientSecret } = await oauth.clients.create({
   name: 'Claude',
-  redirectUris: ['<Claude connector callback, from their docs>'],
+  redirectUris: [CLAUDE_CONNECTOR_REDIRECT_URI, ...CLAUDE_CODE_REDIRECT_URIS],
   allowedScopes: ['openid', 'profile', 'email', 'contacts.read'],
   branding: { logoUrl: 'https://…/claude.png', publisher: 'Anthropic' },
 });
@@ -111,12 +140,25 @@ const { clientId, clientSecret } = await oauth.clients.create({
 //   to read it back. Losing it means rotateSecret().
 ```
 
+The callbacks ship as constants because retyping one is the most error-prone
+step in this whole page — see [Vendor callback URLs](/guide/mcp#vendor-callback-urls)
+for every value and for ChatGPT, whose current callback is per-connector and
+therefore *not* a constant.
+
 `redirectUris` is compared by **exact string equality** at `/authorize` — no
 prefix match, no wildcard, no ignoring the query string. A typo registered today
 is a partner integration that half-works six weeks later with no error pointing
 back here, which is why `create()` validates hard and names the offending value.
 `https` is required except on `localhost` / `127.0.0.1`, where connector
 development actually happens.
+
+The one exception to byte-exactness is the **port of a loopback URI**, which
+RFC 8252 §7.3 requires an authorization server to let vary: a native client like
+Claude Code binds an ephemeral port per session and cannot know it at
+registration time, so `http://127.0.0.1/callback` matches a request from
+`http://127.0.0.1:54321/callback`. Register these *without* a port. Nothing else
+is relaxed — scheme, host, path and query still have to match exactly, and a
+non-loopback host never matches a different port.
 
 `allowedScopes` must be a subset of the configured catalog. `allowedResources`
 defaults to every configured resource.

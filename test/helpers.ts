@@ -4,7 +4,6 @@ import mongoose from 'mongoose';
 import request from 'supertest';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import { resolveConfig, type ResolvedContext } from '../src/server/config.js';
-import { syncModelIndexes } from '../src/server/models.js';
 import { randomToken, sha256 } from '../src/server/crypto.js';
 import { createProtect } from '../src/server/protect.js';
 import { createDiscoveryRouter, createOAuthRouter } from '../src/server/routes/index.js';
@@ -121,8 +120,10 @@ export async function buildApp({ session, config = {} }: BuildAppOptions = {}): 
     ...config,
   });
 
-  // Await index builds rather than race them — traps #3.
-  await syncModelIndexes(ctx.models);
+  // Await index builds rather than race them — traps #3. Through `ctx`, not
+  // `syncModelIndexes` directly: resolving it is also what marks the instance
+  // ready, and the write routes fail closed until it has.
+  await ctx.syncIndexes();
 
   const app = express();
   // The HOST's parsers and auth, upstream of everything. Note there is NO

@@ -62,6 +62,12 @@ loadUser: async (id) => {
 },
 ```
 
+**Normalize the id with `String(id)` before you compare it.** `UserId` is
+`Types.ObjectId | string` and `findById()` accepts both, so a host that writes
+`loadUser: (id: string) => …` typechecks and works right up until something
+compares ids — at which point an `ObjectId` and its string form are not equal
+and the mismatch surfaces somewhere else entirely.
+
 `resolveUser` **cannot serve `/userinfo` or the `id_token`.** Those are reached
 on the bearer and client-authenticated bands, where there is no host session to
 read and the only identity available is the `userId` stored on the token. There
@@ -130,8 +136,16 @@ the package is guaranteed to get to ask again. When it returns false mid-flight,
 the grant is revoked, the token family is killed, and the refresh fails with
 `invalid_grant`.
 
-`verify()` on the refresh path receives only `{ id }` — there is no request to
-resolve a fuller user from at that point. Write it to need nothing else.
+`verify()` receives a **fully populated `PackageUser` when `loadUser` is
+configured** — the package resolves it through the same adapter `/userinfo`
+uses. That matters for the rules people actually write: "a member of this
+account **or** an admin" cannot be evaluated from an id alone, and without this
+the host would have to re-read the same user from the database on every single
+refresh just to see a flag.
+
+**Without a `loadUser` adapter, `verify()` gets `{ id }` and nothing else.** So
+if your rule reads any attribute beyond the id, configure `loadUser` — the same
+one that fills the `profile` and `email` claims.
 
 Both methods are required; supplying one is a boot error.
 

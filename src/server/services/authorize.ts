@@ -1,5 +1,6 @@
 import { randomToken } from '../crypto.js';
 import { OAuthError, RedirectableAuthError, UnredirectableError } from '../errors.js';
+import { redirectUriRegistered } from '../redirect-uris.js';
 import { isMetadataUrl, resolveCimdClient } from './cimd.js';
 import { parseScope, resolveDefaultScopes, validateResources, validateScopes } from './scopes.js';
 import type { ResolvedContext } from '../config.js';
@@ -10,8 +11,9 @@ import type { OAuthClientDoc, OAuthRequestDoc, PackageUser } from '../../../type
  *
  * The single most important thing in this file is the ORDER of the checks. It
  * is a security boundary, not a style: until `client_id` resolves to a live
- * registration AND `redirect_uri` matches that registration exactly, there is
- * no address we have proven safe to send a browser to. Reporting an error by
+ * registration AND `redirect_uri` matches that registration (`redirect-uris.ts`
+ * — exact, with RFC 8252 §7.3's loopback-port carve-out and nothing else), there
+ * is no address we have proven safe to send a browser to. Reporting an error by
  * redirect before that point is the open-redirect hole. Everything checked
  * after it may be redirected back to the client with `state` and `iss` intact.
  *
@@ -93,11 +95,13 @@ export async function validateAuthorizationRequest(
   if (!redirectUri) {
     throw new UnredirectableError('invalid_request', '`redirect_uri` is required');
   }
-  // Exact string comparison against the registration — no prefix match, no
-  // wildcard, no ignoring the query string. Every relaxation of this rule is a
-  // published attack; a client that needs a second callback registers a second
-  // URI.
-  if (!client.redirectUris.includes(redirectUri)) {
+  // Exact comparison against the registration — no prefix match, no wildcard,
+  // no ignoring the query string. Every relaxation of this rule is a published
+  // attack; a client that needs a second callback registers a second URI. The
+  // single exception lives in `redirect-uris.ts`: RFC 8252 §7.3 requires the
+  // PORT of a loopback URI to be allowed to vary, because a native client binds
+  // an ephemeral one per session.
+  if (!redirectUriRegistered(client.redirectUris, redirectUri)) {
     throw new UnredirectableError(
       'invalid_request',
       `redirect_uri is not registered for client '${clientId}'`,

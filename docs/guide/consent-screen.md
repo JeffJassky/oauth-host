@@ -91,10 +91,37 @@ design bug in the package, not a reason to add one.
 | `scopes[].description` | string? | Optional second line. |
 | `scopes[].sensitive` | `true`? | Present only when true. Render with emphasis — write access, destructive access, billing. |
 | `scopes[].isNew` | boolean | `false` means the user already granted this scope to this client. |
-| `contexts` | array? | **Key absent** unless a `grantContext` adapter is configured. `[{ id, label, description? }]`. |
+| `contexts` | array? | **Key absent** unless a `grantContext` adapter is configured. `[{ id, label, description? }]`. **Capped at 50** — see below. |
+| `contextsHasMore` | boolean? | Present exactly when `contexts` is. `true` means `grantContext.list()` returned more than the 50 `contexts` carries. |
 | `user.displayName` | string \| null | Whose account is about to be connected. Shows the user they are signed in as who they think they are. |
 | `user.email` | string? | Omitted when the user adapter gave none. |
 | `expiresAt` | ISO date | When the pending request dies. Default 10 minutes (`ttl.authorizationRequest`). |
+
+### `contexts` is capped, and says when it is
+
+**Added to the contract.** `contexts` carries at most **50** entries, and
+`contextsHasMore` tells you whether `grantContext.list()` returned more.
+
+Every other list in this package is clamped — the admin API defaults to 50 with
+a ceiling of 200 — and this one is on an interactive path with the whole array
+embedded in the payload. A host whose `list()` answers "every account in the
+system" for an admin was the reported case.
+
+Truncating silently would have been worse than not clamping at all: account #501
+would simply be unconnectable, with nothing in the payload saying so. Hence the
+flag.
+
+**What to do when `contextsHasMore` is `true`:** do not render the 50 as if they
+were the whole list, and do not paginate them — the payload has no cursor and
+adding one would put an internal identifier in a contract that deliberately has
+none. Offer **search instead of a picker**: a text input backed by your own
+endpoint, which already knows how to query the same organizations `list()` reads
+from, and which is where the authorization for that query belongs. Post the
+chosen `contextId` back exactly as you would from the picker — the decision
+endpoint verifies it through `grantContext.verify()` regardless of how your UI
+found it, so a context outside the 50 is still perfectly grantable.
+
+When it is `false`, the array is complete and a plain picker is correct.
 
 `isNew` is the one derived bit, and it is computed against **every live grant**
 this user holds for this client, unioned — not against one grant. The context is

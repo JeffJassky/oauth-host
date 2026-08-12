@@ -35,6 +35,7 @@ the type is [`CreateOAuthHostConfig`](/reference/types#createoauthhostconfig).
 | `users` | [`UsersApi`](/reference/admin-api#users) |
 | `contexts` | [`ContextsApi`](/reference/admin-api#contexts) |
 | `syncIndexes()` | `Promise<void>`. Build every index. **Await at boot, before the first write.** |
+| `ready` | `boolean`. True once `syncIndexes()` resolved. Until then `/authorize`, `POST /consent/:requestId` and `POST /token` answer `503 server_error` — [Data model](/guide/data-model#build-the-indexes-before-the-first-write). |
 | `models` | The seven Mongoose models — [Models](/reference/models). Escape hatch; no invariants attached. |
 
 ```ts
@@ -68,6 +69,11 @@ cookie ends up sufficient to exchange somebody else's authorization code. See
 | `OAuthError` | `status` + RFC `code` + `description`, answered as itself rather than a 500 |
 | `RedirectableAuthError` | An `/authorize` failure the client may be told about by redirect |
 | `UnredirectableError` | An `/authorize` failure that must be rendered — see [the boundary](/guide/security#the-redirect-vs-render-boundary) |
+| `CLAUDE_CONNECTOR_REDIRECT_URI` | claude.ai's connector callback — [Vendor callback URLs](/guide/mcp#vendor-callback-urls) |
+| `CLAUDE_CODE_REDIRECT_URIS` | Claude Code's loopback callbacks, `readonly string[]` |
+| `CHATGPT_LEGACY_REDIRECT_URI` | ChatGPT's older single callback |
+| `CHATGPT_CONNECTOR_REDIRECT_URI_PATTERN` | The **shape** of ChatGPT's per-connector callback. Not a value to register |
+| `CIMD_ALLOWED_HOSTS` | A suggested `clientIdMetadata.allowedHosts`, `readonly string[]`. Never a default |
 
 ## Throws at construction
 

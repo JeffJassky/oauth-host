@@ -39,9 +39,30 @@ export interface ConsentPayload {
     isNew: boolean;
   }>;
   contexts?: Array<{ id: string; label: string; description?: string }>;
+  /**
+   * True when `grantContext.list()` returned more than `contexts` carries.
+   *
+   * Present exactly when `contexts` is. See `CONSENT_CONTEXT_LIMIT`.
+   */
+  contextsHasMore?: boolean;
   user: { displayName?: string | null; email?: string };
   expiresAt: Date;
 }
+
+/**
+ * How many grant contexts the consent payload carries.
+ *
+ * Every other list in this package is clamped — the admin API defaults to 50
+ * with a ceiling of 200 — and this one is on an interactive path, embedded whole
+ * in a payload a browser renders. An admin of a host where `list()` answers
+ * "every account in the system" was the reported case.
+ *
+ * Truncating silently would be worse than not clamping: account #501 would
+ * simply be unconnectable, with nothing in the payload saying so. Hence
+ * `contextsHasMore` — it is the flag that lets a consent UI offer search instead
+ * of rendering a prefix and calling it the whole list.
+ */
+export const CONSENT_CONTEXT_LIMIT = 50;
 
 /** Same user? Ids may be ObjectId or string depending on the host. */
 function sameUser(a: PackageUser['id'], b: PackageUser['id']): boolean {
@@ -125,10 +146,12 @@ export async function getConsentPayload(
   // single-subject host is exactly the leak that generalization was supposed
   // to avoid.
   if (ctx.grantContext) {
-    payload.contexts = await ctx.grantContext.list(user, {
+    const all = await ctx.grantContext.list(user, {
       client: toPublicClient(client),
       scopes: request.scopes,
     });
+    payload.contexts = all.slice(0, CONSENT_CONTEXT_LIMIT);
+    payload.contextsHasMore = all.length > CONSENT_CONTEXT_LIMIT;
   }
 
   return payload;

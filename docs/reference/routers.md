@@ -115,7 +115,7 @@ from one function, so they cannot drift.
 |---|---|---|
 | `response_type` | yes | `code` only |
 | `client_id` | yes | |
-| `redirect_uri` | yes | **exact string match** against the registration |
+| `redirect_uri` | yes | **exact string match** against the registration — except the **port** of a loopback URI, which RFC 8252 §7.3 requires to be allowed to vary |
 | `scope` | — | space-delimited; each must be in the catalog **and** in the client's `allowedScopes` |
 | `resource` | — | RFC 8707. May repeat. Defaults to the client's first allowed resource |
 | `state` | — | echoed on every response, success and error |
@@ -138,6 +138,7 @@ Outcomes:
 | Signed out, no `loginUrl` | `401 {"error": "login_required"}` |
 | Unredirectable error | `400` JSON, **no `Location`** |
 | Redirectable error | `302` → `redirect_uri?error=…&error_description=…&state=…&iss=…` |
+| `syncIndexes()` has not resolved | `503 {"error": "server_error"}` JSON, **no `Location`** |
 
 Which errors go which way is a security boundary — see
 [the redirect-vs-render boundary](/guide/security#the-redirect-vs-render-boundary).
@@ -187,7 +188,7 @@ On denial the same field carries `error=access_denied` instead of `code`.
 Errors: `400 invalid_request` (bad `approve`, a scope outside the request,
 already decided, `contextId` missing or unexpected), `401 login_required`,
 `403 access_denied` (another user's handle, or `verify()` returned false),
-`404 invalid_request`.
+`404 invalid_request`, `503 server_error` (`syncIndexes()` has not resolved).
 
 A decision is claimed atomically, so two concurrent approvals cannot mint two
 codes. A *rejected* decision leaves the handle usable.
@@ -255,6 +256,7 @@ Errors:
 | 400 | `unsupported_grant_type` | anything but the two above |
 | 401 | `invalid_client` | any client-auth failure — one answer for all of them |
 | 429 | `too_many_requests` | with `Retry-After` |
+| 503 | `server_error` | `syncIndexes()` has not resolved — [Data model](/guide/data-model#build-the-indexes-before-the-first-write) |
 
 A replayed code or a reused refresh token additionally **revokes the whole token
 family** — see [Reuse detection](/guide/security#reuse-detection-and-family-revocation).

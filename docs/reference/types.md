@@ -274,6 +274,8 @@ interface ConsentPayload {
     isNew: boolean;
   }>;
   contexts?: Array<{ id: string; label: string; description?: string }>;
+  /** Present exactly when `contexts` is. `contexts` carries at most 50. */
+  contextsHasMore?: boolean;
   user: { displayName?: string | null; email?: string };
   expiresAt: Date;
 }
@@ -387,6 +389,8 @@ interface OAuthHostInstance {
   users: UsersApi;
   contexts: ContextsApi;
   syncIndexes(): Promise<void>;
+  /** True once `syncIndexes()` resolved. The write routes fail closed until it is. */
+  readonly ready: boolean;
   models: OAuthModels;
 }
 ```

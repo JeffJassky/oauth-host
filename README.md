@@ -48,13 +48,21 @@ app.use('/mcp', oauth.protect('contacts.read'), mcpRouter);
 Register each client once — there is no RFC 7591 dynamic client registration:
 
 ```js
+import { CLAUDE_CONNECTOR_REDIRECT_URI, CLAUDE_CODE_REDIRECT_URIS } from '@jeffjassky/oauth-host';
+
 const { clientId, clientSecret } = await oauth.clients.create({
   name: 'Claude',
-  redirectUris: ['<Claude connector callback, from their docs>'],
+  redirectUris: [CLAUDE_CONNECTOR_REDIRECT_URI, ...CLAUDE_CODE_REDIRECT_URIS],
   allowedScopes: ['openid', 'contacts.read'],
   branding: { publisher: 'Anthropic' },
 });   // secret returned once, never again
 ```
+
+The callbacks ship as constants because `create()` compares them byte-for-byte
+and retyping one out of a vendor's docs is the most typo-prone step in the setup.
+ChatGPT's current callback is per-connector and therefore not a constant — copy
+it from its setup screen. See
+[Vendor callback URLs](https://jeffjassky.github.io/oauth-host/guide/mcp#vendor-callback-urls).
 
 Or let Claude and ChatGPT register themselves with a [client ID metadata
 document](https://jeffjassky.github.io/oauth-host/guide/cimd) — their

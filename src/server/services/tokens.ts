@@ -1,5 +1,6 @@
 import { OAuthError, invalidGrant, invalidScope } from '../errors.js';
 import { randomToken, sha256, verifyPkce } from '../crypto.js';
+import { redirectUriMatches } from '../redirect-uris.js';
 import type { ResolvedContext } from '../config.js';
 import type {
   OAuthCodeDoc,
@@ -121,9 +122,11 @@ export async function consumeCode(
   if (code.clientId !== opts.clientId) {
     throw invalidGrant('authorization code was issued to a different client');
   }
-  // RFC 6749 §4.1.3 — exact match against the value bound at /authorize. A
-  // prefix or origin comparison here is the classic redirect-hijack hole.
-  if (code.redirectUri !== opts.redirectUri) {
+  // RFC 6749 §4.1.3 — matched against the value bound at /authorize, through
+  // the SAME comparison that bound it. A prefix or origin comparison here is
+  // the classic redirect-hijack hole; two comparisons that disagree is the
+  // subtler version of it, where a URI passes one endpoint and fails the other.
+  if (!redirectUriMatches(code.redirectUri, opts.redirectUri)) {
     throw invalidGrant('redirect_uri does not match the one the code was issued for');
   }
   if (!verifyPkce(opts.codeVerifier ?? '', code.codeChallenge)) {
@@ -309,10 +312,20 @@ export async function rotateRefresh(
 
   // Re-checked on EVERY refresh, not just at consent: a grant made as an
   // employee has to die when the employment does, and the only moment we are
-  // guaranteed to be asked again is this one. `verify` gets the identity the
-  // package holds — there is no request here to resolve a fuller user from.
+  // guaranteed to be asked again is this one.
+  //
+  // `verify` gets the user through `loadUser`, not a bare `{ id }`. There is no
+  // host session on this band, but there IS an adapter for exactly this — the
+  // one `/userinfo` already uses — and a rule like "a member of this account OR
+  // an admin" cannot be written against an id alone without the host re-reading
+  // the same user on every single refresh. With no `loadUser` configured
+  // `ctx.loadUser` still answers `{ id }`, so this costs nothing it did not
+  // already cost.
   if (ctx.grantContext && token.contextId !== null) {
-    const stillAllowed = await ctx.grantContext.verify({ id: token.userId }, token.contextId);
+    const stillAllowed = await ctx.grantContext.verify(
+      await ctx.loadUser(token.userId),
+      token.contextId,
+    );
     if (!stillAllowed) {
       await ctx.models.Grant.updateOne(
         { _id: grant._id, revokedAt: null },

@@ -31,6 +31,24 @@ nothing after that will tell you why.
 `syncIndexes()` awaits `Model.init()` on all seven. Call it at boot, before you
 start serving.
 
+**The package fails closed until it resolves.** `/authorize`,
+`POST /consent/:requestId` and `POST /token` — the three routes that write —
+answer `503 { "error": "server_error" }` with a description naming
+`syncIndexes()`. Discovery, `/jwks`, `/userinfo` and `protect()` keep serving:
+they write nothing an index could be violated by, and taking a read-only API
+down would turn a boot-order mistake into a total outage.
+
+`oauth.ready` is the boolean behind that gate, readable so a host can check its
+own wiring. It is deliberately not a promise — a promise would have to exist
+from construction, so never calling `syncIndexes()` would present as an `await`
+that never settles rather than a value that is plainly `false`.
+
+The flag is read **per request**, not captured at mount time, because the common
+mistake is calling `syncIndexes()` inside the `app.listen` callback — after the
+routers are mounted. That leaves a window even when the call itself is correct;
+the gate is what closes it. Awaiting it before `app.use` removes the window
+entirely.
+
 ## Decisions that are expensive to reverse
 
 These were settled before any code was written, because unwinding them later

@@ -64,6 +64,34 @@ export function createOAuthRouter(ctx: ResolvedContext): Router {
   const clientKey = (req: Request): string => clientIdFromRequest(req) ?? ipKey(req);
   const cors = corsMiddleware(ctx);
 
+  /**
+   * Fail closed until `syncIndexes()` has resolved — but only on the routes
+   * that WRITE.
+   *
+   * `syncIndexes()` is host-called, and the reported integration calls it inside
+   * the `app.listen` callback, after mounting: even done correctly there is a
+   * window in which these routes would serve. The unique partial index on grants
+   * is what stops one user holding two live grants for one client, permanently,
+   * and mongoose builds indexes in the background — so a write that lands in
+   * that window is not recoverable later.
+   *
+   * Read-only surfaces (discovery, `/jwks`, `/userinfo`, `protect()`) are
+   * deliberately NOT gated. They create nothing that could violate an index, and
+   * taking them down would turn a boot-order mistake into a total outage of an
+   * API that was already serving.
+   */
+  const requireIndexes: RequestHandler = w((_req, _res, next) => {
+    if (ctx.indexes.ready) return next();
+    // Thrown rather than passed to `next(err)`: `wrap` is what renders JSON, and
+    // Express's default handler answers HTML — traps #6.
+    throw new OAuthError(
+      503,
+      'server_error',
+      'This authorization server is not ready: `syncIndexes()` has not resolved yet. '
+      + 'Await `oauth.syncIndexes()` at boot, before mounting the routers.',
+    );
+  });
+
   // -------------------------------------------------------------------------
   // Literal paths FIRST. `/consent/:requestId` and `/me/grants/:id` are the
   // parameter routes in this file and they live at the bottom, because a
@@ -76,6 +104,7 @@ export function createOAuthRouter(ctx: ResolvedContext): Router {
 
   router.get(
     '/authorize',
+    requireIndexes,
     rateLimit(ctx, 'authorize', ipKey),
     w(async (req, res) => {
       let validated;
@@ -163,6 +192,7 @@ export function createOAuthRouter(ctx: ResolvedContext): Router {
   router.post(
     '/token',
     cors,
+    requireIndexes,
     form,
     rateLimit(ctx, 'token', clientKey),
     w(async (req, res) => {
@@ -296,6 +326,7 @@ export function createOAuthRouter(ctx: ResolvedContext): Router {
 
   router.post(
     '/consent/:requestId',
+    requireIndexes,
     rateLimit(ctx, 'consent', ipKey),
     w(async (req, res) => {
       const user = await requireUser(ctx, req);

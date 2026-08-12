@@ -11,7 +11,7 @@ import {
   loginRedirectUrl,
   validateAuthorizationRequest,
 } from '../src/server/services/authorize.js';
-import { decideConsent, getConsentPayload } from '../src/server/services/consent.js';
+import { CONSENT_CONTEXT_LIMIT, decideConsent, getConsentPayload } from '../src/server/services/consent.js';
 import type { ResolvedContext } from '../src/server/config.js';
 import type {
   CreateOAuthHostConfig,
@@ -372,6 +372,9 @@ describe('getConsentPayload — the versioned UI contract', () => {
     // Absent, not empty — an empty array says "no contexts to pick", which is a
     // different claim from "this host has no contexts at all".
     expect('contexts' in payload).toBe(false);
+    // And the companion flag goes with it. A `contextsHasMore: false` on a host
+    // that has no contexts at all would be answering a question nobody asked.
+    expect('contextsHasMore' in payload).toBe(false);
   });
 
   it('includes `contexts` from the adapter when one is configured', async () => {
@@ -384,6 +387,44 @@ describe('getConsentPayload — the versioned UI contract', () => {
     const request = await pending(ctx, client);
     const payload = await getConsentPayload(ctx, request.requestId, user);
     expect(payload.contexts).toEqual([{ id: 'org_1', label: 'Acme', description: 'Your team' }]);
+    expect(payload.contextsHasMore).toBe(false);
+  });
+
+  it('clamps a huge context list and says so rather than truncating silently', async () => {
+    // The reported case is an admin whose `list()` answers "every account in the
+    // system". Embedding that whole array in an interactive payload is the bug;
+    // cutting it without a flag is the worse bug, because account #501 is then
+    // simply unconnectable with nothing saying why.
+    const many = Array.from({ length: CONSENT_CONTEXT_LIMIT + 7 }, (_, i) => ({
+      id: `org_${i}`,
+      label: `Org ${i}`,
+    }));
+    const ctx = buildContext({
+      grantContext: { list: () => many, verify: () => true },
+    });
+    const client = await makeClient(ctx);
+    const request = await pending(ctx, client);
+
+    const payload = await getConsentPayload(ctx, request.requestId, user);
+    expect(payload.contexts).toHaveLength(CONSENT_CONTEXT_LIMIT);
+    expect(payload.contexts?.[0]).toEqual({ id: 'org_0', label: 'Org 0' });
+    expect(payload.contextsHasMore).toBe(true);
+  });
+
+  it('leaves hasMore false at exactly the cap, so a full page is not mislabelled', async () => {
+    const exact = Array.from({ length: CONSENT_CONTEXT_LIMIT }, (_, i) => ({
+      id: `org_${i}`,
+      label: `Org ${i}`,
+    }));
+    const ctx = buildContext({
+      grantContext: { list: () => exact, verify: () => true },
+    });
+    const client = await makeClient(ctx);
+    const request = await pending(ctx, client);
+
+    const payload = await getConsentPayload(ctx, request.requestId, user);
+    expect(payload.contexts).toHaveLength(CONSENT_CONTEXT_LIMIT);
+    expect(payload.contextsHasMore).toBe(false);
   });
 
   it('marks re-consented scopes as not new', async () => {

@@ -1,5 +1,5 @@
 import type { Request } from 'express';
-import { createModels } from './models.js';
+import { createModels, syncModelIndexes } from './models.js';
 import type {
   ClaimsAdapter,
   ClientIdMetadataConfig,
@@ -93,6 +93,18 @@ export interface ResolvedCimd {
   failures: Map<string, { until: number; message: string }>;
 }
 
+/**
+ * Whether `syncIndexes()` has resolved, shared by reference.
+ *
+ * A mutable cell rather than a boolean field because the routers close over the
+ * context at mount time and have to observe a flip that happens afterwards —
+ * which is the whole point, since the reported failure is a host calling
+ * `syncIndexes()` inside its `app.listen` callback, after mounting.
+ */
+export interface IndexState {
+  ready: boolean;
+}
+
 export interface ResolvedContext {
   models: OAuthModels;
   issuer: string;
@@ -131,6 +143,11 @@ export interface ResolvedContext {
   cors: { tokenEndpoint: boolean; origins: string[] };
   clockSkewMs: number;
   cimd: ResolvedCimd;
+
+  /** Read by the routes that write. Flipped by `syncIndexes()`, never by hand. */
+  indexes: IndexState;
+  /** Build every index, then mark the instance ready. Idempotent. */
+  syncIndexes(): Promise<void>;
 
   logger: Logger;
   track: (event: OAuthEvent) => void;
@@ -522,6 +539,11 @@ export function resolveConfig(config: CreateOAuthHostConfig): ResolvedContext {
   // defending against a double slash in nine endpoint URLs.
   const normalizedMount = `/${String(mountPath).replace(/^\/+|\/+$/g, '')}`;
 
+  // Starts false, and the write routes answer `server_error` until it is true.
+  // A throw out of `syncModelIndexes` leaves it false, which is correct: a
+  // half-built index set is not a ready server.
+  const indexes: IndexState = { ready: false };
+
   const ctx: ResolvedContext = {
     models,
     issuer,
@@ -553,6 +575,11 @@ export function resolveConfig(config: CreateOAuthHostConfig): ResolvedContext {
     cors: { tokenEndpoint: cors.tokenEndpoint ?? false, origins: cors.origins ?? [] },
     clockSkewMs,
     cimd: resolveCimd(clientIdMetadata, scopeIndex),
+    indexes,
+    async syncIndexes() {
+      await syncModelIndexes(models);
+      indexes.ready = true;
+    },
     logger,
     track,
     async audit(entry) {

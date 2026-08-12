@@ -158,6 +158,79 @@ in URLs land in access logs, `Referer` headers, and browser history, and the
 protected-resource metadata this package publishes says
 `bearer_methods_supported: ["header"]`.
 
+## Vendor callback URLs
+
+`clients.create()` compares `redirectUris` **byte-for-byte**, and the value has
+to be transcribed out of somebody else's documentation. That combination — "one
+wrong character" against "nothing downstream can rescue it" — is the most
+error-prone step in the entire setup, so the values ship as exported constants
+rather than as prose to retype.
+
+```ts
+import {
+  CLAUDE_CONNECTOR_REDIRECT_URI,
+  CLAUDE_CODE_REDIRECT_URIS,
+  CHATGPT_LEGACY_REDIRECT_URI,
+  CHATGPT_CONNECTOR_REDIRECT_URI_PATTERN,
+  CIMD_ALLOWED_HOSTS,
+} from '@jeffjassky/oauth-host';
+```
+
+| Export | Value | Notes |
+|---|---|---|
+| `CLAUDE_CONNECTOR_REDIRECT_URI` | `https://claude.ai/api/mcp/auth_callback` | claude.ai's hosted connector. |
+| `CLAUDE_CODE_REDIRECT_URIS` | `http://localhost/callback`, `http://127.0.0.1/callback` | Register **both**, and **without a port** — see below. |
+| `CHATGPT_LEGACY_REDIRECT_URI` | `https://chatgpt.com/connector_platform_oauth_redirect` | The older single callback. Still accepted for existing connectors. |
+| `CHATGPT_CONNECTOR_REDIRECT_URI_PATTERN` | `https://chatgpt.com/connector/oauth/{callback_id}` | **A shape, not a value.** See below. |
+| `CIMD_ALLOWED_HOSTS` | `claude.ai`, `chatgpt.com` | A *suggested* `clientIdMetadata.allowedHosts`, never a default. |
+
+The array exports are `readonly`, so they spread rather than assign:
+`redirectUris: [CLAUDE_CONNECTOR_REDIRECT_URI, ...CLAUDE_CODE_REDIRECT_URIS]`,
+`allowedHosts: [...CIMD_ALLOWED_HOSTS]`. That is also how they get combined in
+practice.
+
+::: warning These are vendor product details, not standards
+Every value above can change without notice and without a release of this
+package. Each is stamped in `src/server/vendors.ts` with the date it was
+verified against vendor documentation — currently **2026-08-12**. If a connector
+starts failing with `redirect_uri is not registered for client …`, check the
+vendor's current setup screen before assuming a bug here.
+:::
+
+### Claude Code's port varies
+
+Claude Code registers a loopback callback and then connects from an **ephemeral
+port it binds per session** (`http://127.0.0.1:54321/callback`). RFC 8252 §7.3
+requires an authorization server to allow that, and this package does: for a
+loopback URI — host exactly `localhost`, `127.0.0.1` or `[::1]` — the port is
+ignored and everything else is compared exactly.
+
+So register `http://127.0.0.1/callback`, not `http://127.0.0.1:3000/callback`
+(either works, but the portless form says what is meant). Both hosts are
+registered because `localhost` and `127.0.0.1` are *different* registrations —
+the package does not resolve one to the other, because that would mean deciding
+what the client's resolver says.
+
+Nothing else is relaxed. `https://evil.test:8443/cb` does not match a
+registration of `https://evil.test/cb`, and `http://localhost.evil.test/cb` is
+not loopback. A general "ports don't count" comparison is an open redirect, and
+there is a test file named after each of those failures.
+
+### ChatGPT's callback is per connector
+
+ChatGPT's current callback is `https://chatgpt.com/connector/oauth/{callback_id}`
+— a **pattern**, where `{callback_id}` is assigned when the connector is created.
+There is no fixed string to ship, and this package deliberately does not invent
+one.
+
+**Copy the exact URL from your connector's setup screen** and paste it into
+`redirectUris`. `CHATGPT_CONNECTOR_REDIRECT_URI_PATTERN` exists so the docs and
+the code agree on the shape; it is not a value to register, and registering it
+literally produces a client that never authorizes.
+
+`CHATGPT_LEGACY_REDIRECT_URI` is the older single callback and is still accepted
+for connectors that were created against it.
+
 ## Connecting Claude or ChatGPT
 
 There is no dynamic client registration (RFC 7591). Two ways to get a connector
@@ -168,9 +241,14 @@ registered instead.
 Register the connector once and paste the credentials into their setup UI.
 
 ```ts
+import {
+  CLAUDE_CONNECTOR_REDIRECT_URI,
+  CLAUDE_CODE_REDIRECT_URIS,
+} from '@jeffjassky/oauth-host';
+
 const { clientId, clientSecret } = await oauth.clients.create({
   name: 'Claude',
-  redirectUris: ['<Claude connector callback, from their docs>'],
+  redirectUris: [CLAUDE_CONNECTOR_REDIRECT_URI, ...CLAUDE_CODE_REDIRECT_URIS],
   allowedScopes: ['openid', 'profile', 'email', 'contacts.read'],
   branding: { logoUrl: 'https://…/claude.png', publisher: 'Anthropic' },
 });
@@ -190,9 +268,11 @@ advertises it — the user pastes your MCP server URL and nothing else. Enable i
 and name the hosts you trust:
 
 ```ts
+import { CIMD_ALLOWED_HOSTS } from '@jeffjassky/oauth-host';
+
 clientIdMetadata: {
   enabled: true,
-  allowedHosts: ['claude.ai', 'chatgpt.com'],
+  allowedHosts: [...CIMD_ALLOWED_HOSTS],   // ['claude.ai', 'chatgpt.com']
 }
 ```
 
@@ -209,8 +289,10 @@ A checklist for the things that actually go wrong:
 - **`issuer` is the public origin.** Not `http://localhost:3000` behind a proxy,
   not with a trailing slash, not the internal hostname. Clients compare it.
 - **The callback URL is registered byte-for-byte.** Exact string equality, no
-  prefix matching, no ignoring the query string. Get it from the client's docs
-  and paste it; do not retype it.
+  prefix matching, no ignoring the query string. Use the
+  [constants](#vendor-callback-urls) where there is one, and for ChatGPT copy
+  the exact per-connector URL from its setup screen. Do not retype either. The
+  single exception is the port of a **loopback** URI, which is allowed to vary.
 - **`https` everywhere except loopback.** `clients.create()` rejects anything
   else, which is a boot-time error rather than a mystery at authorization time.
 - **`/.well-known/*` is reachable from the public internet**, not behind the

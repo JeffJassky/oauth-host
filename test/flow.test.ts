@@ -17,6 +17,7 @@ import {
   testUser,
   type BuiltApp,
 } from './helpers.js';
+import { CLAUDE_CODE_REDIRECT_URIS } from '../src/server/vendors.js';
 import type { CreatedClient } from '../types/index.js';
 
 /**
@@ -393,6 +394,129 @@ describe('authorization flow', () => {
     expect(res.status).toBe(404);
     expect(res.headers['content-type']).toMatch(/json/);
     expect(res.body.error).toBe('not_found');
+  });
+
+  // -- RFC 8252 §7.3: the loopback port varies -------------------------------
+
+  it('completes a whole flow from an ephemeral loopback port against a portless registration', async () => {
+    // The reported blocker. Claude Code registers `http://127.0.0.1/callback`
+    // and connects from a port it binds per session; byte-exact comparison made
+    // every authorization an unredirectable `invalid_request` that read as the
+    // client's bug.
+    const local = await createTestClient(built, {
+      redirectUris: [...CLAUDE_CODE_REDIRECT_URIS],
+    });
+    const ephemeral = 'http://127.0.0.1:54321/callback';
+    const pair = pkce();
+
+    const authRes = await request(built.app).get('/oauth/authorize').query({
+      response_type: 'code',
+      client_id: local.clientId,
+      redirect_uri: ephemeral,
+      scope: 'openid contacts.read',
+      resource: TEST_RESOURCE,
+      code_challenge: pair.challenge,
+      code_challenge_method: 'S256',
+    });
+    expect(authRes.status).toBe(302);
+
+    const requestId = param(authRes.headers.location!, 'request_id')!;
+    const decision = await request(built.app)
+      .post(`/oauth/consent/${requestId}`)
+      .send({ approve: true });
+    expect(decision.status).toBe(200);
+    const code = param(String(decision.body.redirectTo), 'code')!;
+    // The code comes back to the port the browser actually used, not the
+    // registered one — the redirect is built from the request.
+    expect(String(decision.body.redirectTo).startsWith(ephemeral)).toBe(true);
+
+    // And the token endpoint has to agree with /authorize, or the flow dies one
+    // step later than it used to.
+    const tokens = await exchange(built, local, {
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: ephemeral,
+      code_verifier: pair.verifier,
+    });
+    expect(tokens.status).toBe(200);
+    expect(tokens.body.access_token).toBeTypeOf('string');
+  });
+
+  it('still renders a non-loopback redirect_uri whose only difference is the port', async () => {
+    // The same relaxation applied generally is an open redirect: anyone who
+    // controls another port on the registered host would collect codes.
+    const remote = await createTestClient(built, {
+      redirectUris: ['https://client.test/cb'],
+    });
+    const res = await request(built.app).get('/oauth/authorize').query({
+      response_type: 'code',
+      client_id: remote.clientId,
+      redirect_uri: 'https://client.test:8443/cb',
+      scope: 'openid',
+      code_challenge: pkce().challenge,
+      code_challenge_method: 'S256',
+    });
+    expect(res.status).toBe(400);
+    expect(res.headers.location).toBeUndefined();
+  });
+
+  // -- fail closed until syncIndexes() has resolved ---------------------------
+
+  it('answers server_error naming syncIndexes() on the routes that WRITE', async () => {
+    // The reported host calls `syncIndexes()` inside its `app.listen` callback,
+    // after mounting — so the flag has to be read per request, not captured at
+    // mount time. Flipping it here is exactly that window.
+    built.ctx.indexes.ready = false;
+
+    const authRes = await request(built.app).get('/oauth/authorize').query({
+      response_type: 'code',
+      client_id: client.clientId,
+      redirect_uri: REDIRECT_URI,
+      scope: 'openid',
+      code_challenge: pkce().challenge,
+      code_challenge_method: 'S256',
+    });
+    expect(authRes.status).toBe(503);
+    expect(authRes.body.error).toBe('server_error');
+    expect(authRes.body.error_description).toContain('syncIndexes()');
+    // Never a redirect: an unready server must not hand the client a code path
+    // that looks like a protocol error it can retry into.
+    expect(authRes.headers.location).toBeUndefined();
+
+    const consentRes = await request(built.app).post('/oauth/consent/anything').send({ approve: true });
+    expect(consentRes.status).toBe(503);
+    expect(consentRes.body.error).toBe('server_error');
+
+    const tokenRes = await exchange(built, client, { grant_type: 'refresh_token', refresh_token: 'x' });
+    expect(tokenRes.status).toBe(503);
+    expect(tokenRes.body.error).toBe('server_error');
+    expect(tokenRes.body.error_description).toContain('syncIndexes()');
+  });
+
+  it('keeps the read-only surfaces serving while indexes are unbuilt', async () => {
+    // Taking discovery, JWKS and /userinfo down would turn a boot-order mistake
+    // into a total outage of an API that was already working. None of them
+    // writes anything an index could be violated by.
+    const flow = await authorize(built, client, { scope: 'openid' });
+    built.ctx.indexes.ready = false;
+
+    expect((await request(built.app).get('/.well-known/oauth-authorization-server')).status).toBe(200);
+    expect((await request(built.app).get('/.well-known/oauth-protected-resource')).status).toBe(200);
+    expect((await request(built.app).get('/oauth/jwks')).status).toBe(200);
+    const userinfo = await request(built.app)
+      .get('/oauth/userinfo')
+      .set('Authorization', `Bearer ${flow.tokens.access_token}`);
+    expect(userinfo.status).toBe(200);
+    // The GET half of consent reads; only the POST writes.
+    expect((await request(built.app).get(`/oauth/consent/${flow.requestId}`)).status).not.toBe(503);
+
+    built.ctx.indexes.ready = true;
+  });
+
+  it('reports readiness through ctx once syncIndexes() has resolved', async () => {
+    built.ctx.indexes.ready = false;
+    await built.ctx.syncIndexes();
+    expect(built.ctx.indexes.ready).toBe(true);
   });
 });
 

@@ -1,5 +1,4 @@
 import { resolveConfig } from './config.js';
-import { syncModelIndexes } from './models.js';
 import { createProtect } from './protect.js';
 import { createDiscoveryRouter, createOAuthRouter } from './routes/index.js';
 import {
@@ -13,6 +12,13 @@ import type { CreateOAuthHostConfig, OAuthHostInstance } from '../../types/index
 export { defaultResolveUser, createUserAdapter } from './config.js';
 export { createModels, syncModelIndexes } from './models.js';
 export { OAuthError, RedirectableAuthError, UnredirectableError } from './errors.js';
+export {
+  CHATGPT_CONNECTOR_REDIRECT_URI_PATTERN,
+  CHATGPT_LEGACY_REDIRECT_URI,
+  CIMD_ALLOWED_HOSTS,
+  CLAUDE_CODE_REDIRECT_URIS,
+  CLAUDE_CONNECTOR_REDIRECT_URI,
+} from './vendors.js';
 
 /**
  * oauth-host — the package factory.
@@ -62,8 +68,26 @@ export function createOAuthHost(config: CreateOAuthHostConfig): OAuthHostInstanc
      * stops one user holding two live grants for the same client, and mongoose
      * builds indexes in the background — a cold database will happily serve
      * the write that violates it first. See standards/traps.md #3.
+     *
+     * Resolving this is also what flips `ready` and un-gates `/authorize`,
+     * `POST /consent/:requestId` and `POST /token`.
      */
-    syncIndexes: () => syncModelIndexes(ctx.models),
+    syncIndexes: () => ctx.syncIndexes(),
+
+    /**
+     * Has `syncIndexes()` resolved?
+     *
+     * A boolean, not a promise, and the difference is the failure mode. A
+     * promise would have to exist from construction, so a host that never calls
+     * `syncIndexes()` would await it forever — a boot-order mistake turning into
+     * an unexplained hang with no message. A boolean is plainly `false`, cannot
+     * be awaited by accident, and is backed by three routes that say what is
+     * wrong by name. Gate a mount on it, or simply
+     * `await oauth.syncIndexes()` first, which is the same thing said directly.
+     */
+    get ready() {
+      return ctx.indexes.ready;
+    },
 
     /** Escape hatch. Prefer the APIs above; these carry no invariants. */
     models: ctx.models,
