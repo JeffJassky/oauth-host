@@ -1,0 +1,32 @@
+node_modules/
+dist/
+coverage/
+.cache/
+.DS_Store
+*.log
+
+# env
+.env
+.env.local
+.env.*.local
+
+# editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+
+# vitepress
+docs/.vitepress/dist/
+docs/.vitepress/cache/
+
+# A bare `config.js` rule in a user's global gitignore (core.excludesFile)
+# applies to every repo on the machine. It silently dropped both the adapter
+# module and the docs config from featureboard's first push — CI caught the
+# first, nothing caught the second (VitePress builds fine without a config and
+# deploys a site with no nav). Repo rules outrank the global file, so these are
+# re-included explicitly. See standards/traps.md #1.
+!src/**/config.js
+!src/**/config.ts
+!src/**/tsconfig.json
+!docs/.vitepress/config.js
+!docs/.vitepress/config.ts

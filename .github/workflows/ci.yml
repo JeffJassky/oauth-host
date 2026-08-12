@@ -1,0 +1,49 @@
+name: CI
+
+# Standalone, deliberately. The house plan is thin callers of reusable
+# workflows in a shared repo — that repo does not exist yet, and a `uses:`
+# pointing at nothing trades drift for red CI. See template/README.md.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # A peer range is a claim, and an untested claim is a lie. Every major
+        # in package.json's `peerDependencies` gets a job here, or the range
+        # gets narrowed. See standards/traps.md #10.
+        mongoose: ['7', '8', '9']
+    name: test (mongoose ${{ matrix.mongoose }})
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      # FIRST. Every later step passes against the working tree, which is
+      # exactly the thing that lies when a global gitignore ate a file.
+      # See standards/traps.md #1.
+      - run: npm run check-tracked
+
+      - run: npm run typecheck
+
+      # --no-save keeps the lockfile authoritative for everything else.
+      - run: npm install mongoose@${{ matrix.mongoose }} --no-save
+
+      # Build BEFORE test: the UI tests assert against the bundle in dist/ui.
+      # See standards/traps.md #11.
+      - run: npm run build
+      - run: npm test
+
+      # import.meta.url cannot be expressed in CJS by esbuild; tsup shims it.
+      # Verify the shim survived the last tsup bump — traps #7.
+      - name: CJS entry actually loads
+        run: node -e "const p=require('./dist/index.cjs'); if (typeof p.defaultSpaDir() !== 'string') process.exit(1)"

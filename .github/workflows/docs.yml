@@ -1,0 +1,61 @@
+name: Deploy docs
+
+# Pages must be enabled with build_type=workflow before the first run:
+#   gh api -X POST /repos/<owner>/<name>/pages -f "build_type=workflow"
+# See standards/publishing.md.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - '.github/workflows/docs.yml'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0        # lastUpdated needs real history
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      # A docs site that builds green and deploys with no nav is the exact
+      # failure traps #1 describes — VitePress does not need its config to
+      # succeed. check-tracked is what notices the config is missing.
+      - run: npm run check-tracked
+
+      # VitePress fails the build on dead links. That is the feature: a renamed
+      # page stays broken until every reference is updated — traps #13.
+      - run: npm run docs:build
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/.vitepress/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

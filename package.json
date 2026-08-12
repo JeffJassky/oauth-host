@@ -1,0 +1,79 @@
+{
+  "name": "@jeffjassky/oauth-host",
+  "version": "0.0.0",
+  "description": "OAuth 2.1 + OIDC authorization server for Express/Mongoose apps.",
+  "license": "MIT",
+  "author": "Jeff Jassky <jeff@jeffjassky.com>",
+  "homepage": "https://jeffjassky.github.io/oauth-host/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JeffJassky/oauth-host.git"
+  },
+  "bugs": {
+    "url": "https://github.com/JeffJassky/oauth-host/issues"
+  },
+  "keywords": [
+    "oauth",
+    "oauth2",
+    "oidc",
+    "openid-connect",
+    "mcp",
+    "authorization-server",
+    "express",
+    "mongoose"
+  ],
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "types",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "check-tracked": "node scripts/check-tracked.mjs",
+    "clean": "rm -rf dist coverage",
+    "prepublishOnly": "npm run clean && npm run typecheck && npm run build && npm test",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
+  },
+  "peerDependencies": {
+    "express": "^4.18.0 || ^5.0.0",
+    "mongoose": "^7.0.0 || ^8.0.0 || ^9.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.7.0",
+    "@types/supertest": "^6.0.2",
+    "express": "^5.2.1",
+    "mongodb-memory-server": "^11.1.0",
+    "mongoose": "^9.9.1",
+    "supertest": "^7.0.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.6.0",
+    "vitepress": "^1.4.0",
+    "vitest": "^2.1.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
