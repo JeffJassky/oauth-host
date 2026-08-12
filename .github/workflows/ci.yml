@@ -38,12 +38,15 @@ jobs:
       # --no-save keeps the lockfile authoritative for everything else.
       - run: npm install mongoose@${{ matrix.mongoose }} --no-save
 
-      # Build BEFORE test: the UI tests assert against the bundle in dist/ui.
-      # See standards/traps.md #11.
       - run: npm run build
       - run: npm test
 
-      # import.meta.url cannot be expressed in CJS by esbuild; tsup shims it.
-      # Verify the shim survived the last tsup bump — traps #7.
+      # A host compiled to CommonJS can only `require()`, and an ESM-only
+      # package fails there with ERR_REQUIRE_ESM. Prove the CJS half is real by
+      # calling through it, not by checking the file exists.
+      #
+      # This does NOT check `import.meta.url` (traps #7): this package ships no
+      # SPA, so nothing in it locates a bundle on disk. Put that back if a
+      # future entry point ever reads from `__dirname`.
       - name: CJS entry actually loads
-        run: node -e "const p=require('./dist/index.cjs'); if (typeof p.defaultSpaDir() !== 'string') process.exit(1)"
+        run: node -e "const p=require('./dist/index.cjs'); if (typeof p.createOAuthHost !== 'function') process.exit(1)"
