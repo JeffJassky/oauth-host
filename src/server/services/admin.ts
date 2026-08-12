@@ -8,6 +8,8 @@ import type {
   ContextsApi,
   CreateClientSpec,
   CreatedClient,
+  CreatedConfidentialClient,
+  CreatedPublicClient,
   GrantContext,
   GrantSummary,
   GrantsApi,
@@ -190,6 +192,24 @@ function assertResources(ctx: ResolvedContext, input: unknown): string[] {
   return [...(input as string[])];
 }
 
+/**
+ * `confidential` unless the caller said otherwise.
+ *
+ * The default is the compatibility guarantee: every registration written before
+ * this option existed, and every caller that does not know about it, keeps
+ * getting a secret. Choosing `public` is a deliberate act, because it is the one
+ * that produces a registration `/token` will accept with no credential.
+ */
+function assertClientType(value: unknown): 'confidential' | 'public' {
+  if (value === undefined) return 'confidential';
+  if (value !== 'confidential' && value !== 'public') {
+    throw new TypeError(
+      `oauth-host: client type must be 'confidential' or 'public' (got ${JSON.stringify(value)})`,
+    );
+  }
+  return value;
+}
+
 function assertName(value: unknown): string {
   if (typeof value !== 'string' || !value.trim()) {
     throw new TypeError('oauth-host: a client needs a non-empty `name` — it is what the consent screen shows');
@@ -233,41 +253,59 @@ async function revokeTokensMatching(
 // ---------------------------------------------------------------------------
 
 export function createClientsApi(ctx: ResolvedContext): ClientsApi {
+  // A function declaration rather than a method on the object literal, because
+  // this is the one member of the API that is overloaded — the confidential
+  // default has to keep returning `clientSecret: string` while a public
+  // registration returns a shape with no secret in it at all.
+  function create(spec: CreateClientSpec & { type: 'public' }): Promise<CreatedPublicClient>;
+  function create(spec: CreateClientSpec & { type?: 'confidential' }): Promise<CreatedConfidentialClient>;
+  function create(spec: CreateClientSpec): Promise<CreatedClient>;
+  async function create(spec: CreateClientSpec): Promise<CreatedClient> {
+    if (!spec || typeof spec !== 'object') {
+      throw new TypeError('oauth-host: clients.create(spec) requires a spec object');
+    }
+    const name = assertName(spec.name);
+    const type = assertClientType(spec.type);
+    const redirectUris = assertRedirectUris(spec.redirectUris);
+    const allowedScopes = assertScopes(ctx, spec.allowedScopes);
+    const allowedResources = assertResources(ctx, spec.allowedResources);
+
+    const clientId = spec.clientId ?? generateClientId();
+    // Not generated and then withheld — never generated. A secret that exists
+    // anywhere for a public client is a credential `authenticateClient` would
+    // refuse and an operator could still find in a log.
+    const clientSecret = type === 'confidential' ? generateClientSecret() : undefined;
+
+    const doc = await ctx.models.Client.create({
+      clientId,
+      name,
+      type,
+      registration: 'manual',
+      trusted: Boolean(spec.trusted),
+      // Only the digest is stored. `clientSecret` below is the only time the
+      // raw value exists outside the caller's variable. Empty for a public
+      // client, which is the same shape a CIMD row is written with.
+      secrets: clientSecret
+        ? [{ hash: sha256(clientSecret), label: 'initial', createdAt: new Date() }]
+        : [],
+      redirectUris,
+      allowedScopes,
+      allowedResources,
+      branding: spec.branding ?? {},
+      status: 'active',
+    });
+
+    await ctx.audit({ type: 'oauth.client_created', actor: 'admin', clientId, meta: { type } });
+
+    return clientSecret
+      ? { client: toPublicClient(doc), clientId, type: 'confidential', clientSecret }
+      : { client: toPublicClient(doc), clientId, type: 'public' };
+  }
+
   return {
-    async create(spec: CreateClientSpec): Promise<CreatedClient> {
-      if (!spec || typeof spec !== 'object') {
-        throw new TypeError('oauth-host: clients.create(spec) requires a spec object');
-      }
-      const name = assertName(spec.name);
-      const redirectUris = assertRedirectUris(spec.redirectUris);
-      const allowedScopes = assertScopes(ctx, spec.allowedScopes);
-      const allowedResources = assertResources(ctx, spec.allowedResources);
+    create,
 
-      const clientId = spec.clientId ?? generateClientId();
-      const clientSecret = generateClientSecret();
-
-      const doc = await ctx.models.Client.create({
-        clientId,
-        name,
-        type: 'confidential',
-        registration: 'manual',
-        trusted: Boolean(spec.trusted),
-        // Only the digest is stored. `clientSecret` below is the only time the
-        // raw value exists outside the caller's variable.
-        secrets: [{ hash: sha256(clientSecret), label: 'initial', createdAt: new Date() }],
-        redirectUris,
-        allowedScopes,
-        allowedResources,
-        branding: spec.branding ?? {},
-        status: 'active',
-      });
-
-      await ctx.audit({ type: 'oauth.client_created', actor: 'admin', clientId });
-
-      return { client: toPublicClient(doc), clientId, clientSecret };
-    },
-
-    async rotateSecret(clientId, opts = {}): Promise<CreatedClient> {
+    async rotateSecret(clientId, opts = {}): Promise<CreatedConfidentialClient> {
       const doc = await ctx.models.Client.findOne({ clientId });
       if (!doc) throw notFound(clientId);
       // An error, not a no-op. A public client has no secret by construction,
@@ -311,7 +349,7 @@ export function createClientsApi(ctx: ResolvedContext): ClientsApi {
         meta: { retireAfter, retiresAt },
       });
 
-      return { client: toPublicClient(doc), clientId, clientSecret };
+      return { client: toPublicClient(doc), clientId, type: 'confidential', clientSecret };
     },
 
     async update(clientId, patch): Promise<PublicClient> {

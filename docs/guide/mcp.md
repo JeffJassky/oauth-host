@@ -233,8 +233,8 @@ for connectors that were created against it.
 
 ## Connecting Claude or ChatGPT
 
-There is no dynamic client registration (RFC 7591). Two ways to get a connector
-registered instead.
+There is no dynamic client registration (RFC 7591) — see [why](/guide/introduction#non-goals).
+Three ways to get a connector registered instead.
 
 ### Manually, the default
 
@@ -260,6 +260,30 @@ SHA-256 is kept here.
 Then, in the client's custom-connector setup: your MCP server URL, the
 `clientId`, and the `clientSecret`. The client discovers everything else from
 the chain above.
+
+### Manually, as a public client
+
+For a client that takes a client id and **no secret**. Codex CLI is the one that
+forces this: `codex mcp login` has `oauth_client_id`, `oauth_resource` and
+`bearer_token_env_var`, and no field for a secret at all. It publishes no
+metadata document either, so CIMD cannot serve it.
+
+```ts
+const { clientId } = await oauth.clients.create({
+  name: 'Codex CLI',
+  type: 'public',                                // no secret is generated
+  redirectUris: ['http://localhost/callback'],   // loopback; the port may vary
+  allowedScopes: ['openid', 'contacts.read'],
+})
+```
+
+The registration is `client_id` plus PKCE, and PKCE is already mandatory here.
+There is no `clientSecret` in the return value to paste anywhere, and
+`rotateSecret()` on this client throws. `type` defaults to `'confidential'`, so
+this is opt-in per registration.
+
+Public and CIMD are [independent](/guide/cimd#public-clients) — this needs no
+`clientIdMetadata` config and makes no outbound request.
 
 ### With a client ID metadata document
 
@@ -344,6 +368,13 @@ a year ago.
 is what lets a client *require* `iss` on the authorization response and so refuse
 a mix-up attack. Every authorization response this package emits carries it,
 errors included.
+
+**On `offline_access`:** Claude appends that scope to its authorization request
+only when the server advertises it in `scopes_supported`, and this package issues
+a refresh token regardless of whether it was asked for — so nothing breaks either
+way and there is nothing to configure. Said out loud because a reader who knows
+the Claude behaviour will otherwise look for the scope in the catalog above,
+not find it, and assume refresh is off.
 
 ## Related
 

@@ -401,6 +401,45 @@ changes without a reason is just a list nobody trusts.
 
 Everything else in §10 holds.
 
+### Amended after live-client integration: public ≠ CIMD
+
+CIMD arrived first, so "public client" and "CIMD client" were written as if they
+were the same thing. They are not, and the difference has a name attached to it:
+**Codex CLI**. `codex mcp login` takes `oauth_client_id`, `oauth_resource` and
+`bearer_token_env_var` and has no field for a secret — it wants a *public*
+registration — while publishing no metadata document anywhere, so CIMD cannot
+serve it. With `clients.create()` always generating a secret and stamping
+`type: 'confidential'`, there was no path at all for that client: it fell
+through to DCR and stopped.
+
+So `clients.create({ type: 'public' })` now exists alongside CIMD. No secret is
+generated, `secrets: []`, `registration: 'manual'`, and no `clientSecret` in the
+return value. The default stays `'confidential'`. Two axes, independent:
+
+| | |
+|---|---|
+| `registration` | how the row got here — `manual` or `cimd` |
+| `type` | how the client authenticates — `confidential` or `public` |
+
+Nothing downstream needed a change, which the model predicted correctly: `type`
+is read in `authenticateClient` and `rotateSecret` and nowhere else, so a
+manually-registered public client travels `/authorize`, `/token`, the consent
+payload, `/me/grants` and `disable()` on the paths a CIMD client already wore in.
+That is asserted rather than assumed — `test/vendors.test.ts`.
+
+**DCR remains a non-goal, and the reason got stronger.** Anthropic recommends
+CIMD over DCR for high-traffic connectors because a DCR client re-registers on
+every fresh connection — one client row per install, per reinstall, per cleared
+cache, with the registration table as the busiest write path in the server.
+Declining to implement it is now alignment with the vendor's own advice rather
+than a gap in the surface. The two registration paths that do exist (manual, in
+both flavours; CIMD) cover every client the live integration reached.
+
+One capability recorded as a known gap rather than a silent one: OpenAI names
+`private_key_jwt` client assertions as a CIMD capability, and this package does
+not implement it. A metadata document naming it is refused with an error saying
+so rather than accepted and ignored.
+
 ### The reason
 
 The open item above resolved in a direction the plan did not anticipate. Both

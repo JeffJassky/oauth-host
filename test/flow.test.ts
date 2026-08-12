@@ -18,7 +18,7 @@ import {
   type BuiltApp,
 } from './helpers.js';
 import { CLAUDE_CODE_REDIRECT_URIS } from '../src/server/vendors.js';
-import type { CreatedClient } from '../types/index.js';
+import type { CreatedConfidentialClient } from '../types/index.js';
 
 /**
  * The end-to-end HTTP suite — build plan §13 step 3.
@@ -38,7 +38,7 @@ afterAll(stopDb);
 
 describe('authorization flow', () => {
   let built: BuiltApp;
-  let client: CreatedClient;
+  let client: CreatedConfidentialClient;
 
   beforeEach(async () => {
     await clearDb();
@@ -532,7 +532,7 @@ describe('authorization flow', () => {
  */
 describe('profile claims without a session', () => {
   let built: BuiltApp;
-  let client: CreatedClient;
+  let client: CreatedConfidentialClient;
 
   beforeEach(async () => {
     await clearDb();

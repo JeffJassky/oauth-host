@@ -106,13 +106,28 @@ Three of the harder omissions are worth their reasoning:
 There is no registration endpoint, no registration access token, and no
 admin-approval queue.
 
-There are two ways a client gets registered instead. The default is manual: you
-call [`oauth.clients.create()`](/reference/admin-api) once from a script or your
-own admin route and paste the returned `clientId` / `clientSecret` into the
+This is not only a scope decision. **Anthropic recommends against DCR for
+high-traffic connectors and points at CIMD instead**, because a DCR client
+re-registers itself on every fresh connection — so a popular connector writes a
+new client row per install, per reinstall, per cleared cache, and the
+registration table becomes the busiest write path in the server. Declining to
+implement it puts this package on the same side as the vendor's own advice
+rather than one feature short of it.
+
+There are three ways a client gets registered instead.
+
+The default is **manual and confidential**: you call
+[`oauth.clients.create()`](/reference/admin-api) once from a script or your own
+admin route and paste the returned `clientId` / `clientSecret` into the
 connector setup. Both Claude's and ChatGPT's custom-connector UIs accept manual
 credentials today.
 
-The second is [client ID metadata documents](/guide/cimd), added after v1 and
+The second is **manual and public** — `create({ type: 'public' })`. No secret is
+generated; the client authenticates with `client_id` plus PKCE. This is the path
+for a client that takes a client id and nothing else and publishes no metadata
+document, which is exactly Codex CLI's MCP login.
+
+The third is [client ID metadata documents](/guide/cimd), added after v1 and
 **off by default**. A client whose `client_id` is an `https://` URL serving a
 JSON document describing itself is registered by that document, fetched from a
 host you allowlisted. Both Claude and ChatGPT prefer it over DCR, and it is what
@@ -121,9 +136,11 @@ the server makes an outbound request driven by a request parameter, which is why
 it is opt-in, host-allowlisted, and has [a page of its
 own](/guide/cimd#what-this-costs-ssrf).
 
-**Public clients** are consequently no longer a non-goal either: a CIMD client
-holds no secret and authenticates with `client_id` plus PKCE. A confidential
-client still cannot downgrade itself by omitting its secret.
+**Public clients** are consequently no longer a non-goal either. Note that
+public and CIMD are [orthogonal](/guide/cimd#public-clients): CIMD is how a
+registration is *discovered*, public vs confidential is how a client
+*authenticates*. A confidential client still cannot downgrade itself by omitting
+its secret.
 
 **An admin dashboard.** The admin API exists in v1 with no caller precisely so a
 dashboard can be built on it later with no server changes. Shipping it as a

@@ -20,6 +20,8 @@ import type {
   ContextsApi,
   CreateClientSpec,
   CreatedClient,
+  CreatedConfidentialClient,
+  CreatedPublicClient,
   CreateOAuthHostConfig,
   GrantContext,
   GrantContextAdapter,
@@ -241,12 +243,47 @@ void oauth.protect();
 declare const spec: CreateClientSpec;
 async function adminSurface(): Promise<void> {
   const clients: ClientsApi = oauth.clients;
-  const created: CreatedClient = await clients.create(spec);
-  // The secret is a plain string, returned once. If this ever becomes optional
-  // the provisioning script silently stops printing it.
+  // The default path. The secret is a plain string, returned once — if this
+  // ever becomes optional the provisioning script silently prints `undefined`.
+  const created: CreatedConfidentialClient = await clients.create({
+    name: 'Claude',
+    redirectUris: ['https://claude.ai/api/mcp/auth_callback'],
+    allowedScopes: ['openid'],
+  });
   const secret: string = created.clientSecret;
   void secret;
-  await clients.rotateSecret(created.clientId, { retireAfter: 86_400_000, label: 'q3' });
+
+  // A hand-registered PUBLIC client — `client_id` plus PKCE, no secret at all.
+  // The client Codex CLI needs, and the one path CIMD cannot serve because it
+  // publishes no metadata document.
+  const publicCreated: CreatedPublicClient = await clients.create({
+    name: 'Codex CLI',
+    redirectUris: ['http://localhost/callback'],
+    allowedScopes: ['openid'],
+    type: 'public',
+  });
+  // Reachable, and `undefined` — not a `string` a caller can print by accident.
+  const noSecret: undefined = publicCreated.clientSecret;
+  void noSecret;
+
+  // A spec whose `type` is not known statically falls to the union overload,
+  // and the union is what makes the caller say which kind it asked for before
+  // it can reach a secret.
+  const either: CreatedClient = await clients.create(spec);
+  const maybeSecret: string | undefined = either.clientSecret;
+  void maybeSecret;
+  if (either.type === 'confidential') {
+    const narrowed: string = either.clientSecret;
+    void narrowed;
+  }
+
+  // Returns the confidential member alone: it throws on a public client, so a
+  // caller never has to narrow a value that cannot be the other case.
+  const rotated: CreatedConfidentialClient = await clients.rotateSecret(created.clientId, {
+    retireAfter: 86_400_000,
+    label: 'q3',
+  });
+  void rotated.clientSecret;
   await clients.update(created.clientId, { name: 'Claude', redirectUris: [] });
   await clients.get(created.clientId);
   await clients.list({ status: 'active', limit: 10, skip: 0 });

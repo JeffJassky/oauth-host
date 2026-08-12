@@ -352,14 +352,37 @@ interface CreateClientSpec {
   branding?: ClientBranding;
   trusted?: boolean;
   clientId?: string;             // generated when omitted
+  type?: 'confidential' | 'public';   // default 'confidential'
 }
 
-interface CreatedClient {
+// Discriminated on `type`, not one shape with an optional secret.
+interface CreatedConfidentialClient {
   client: PublicClient;
   clientId: string;
+  type: 'confidential';
   clientSecret: string;          // returned once. Only its SHA-256 is stored
 }
+
+interface CreatedPublicClient {
+  client: PublicClient;
+  clientId: string;
+  type: 'public';
+  clientSecret?: undefined;      // there is none, and reading it says so
+}
+
+type CreatedClient = CreatedConfidentialClient | CreatedPublicClient;
 ```
+
+`create()` is overloaded so the default path keeps its precise type: a spec with
+no `type` returns `clientSecret: string` exactly as before, and only a caller
+that asked for `public` — or that passes a spec whose `type` is not known
+statically — has to narrow.
+
+A single shape with `clientSecret?: string` was rejected. It breaks
+`const s: string = created.clientSecret` just the same, and it lets the code
+that *doesn't* annotate keep compiling and print the word `undefined` into
+somebody's connector setup screen. See
+[public clients](/guide/cimd#public-clients).
 
 ### `GrantSummary`
 
@@ -399,8 +422,13 @@ interface OAuthHostInstance {
 
 ```ts
 interface ClientsApi {
+  create(spec: CreateClientSpec & { type: 'public' }): Promise<CreatedPublicClient>;
+  create(spec: CreateClientSpec & { type?: 'confidential' }): Promise<CreatedConfidentialClient>;
   create(spec: CreateClientSpec): Promise<CreatedClient>;
-  rotateSecret(clientId: string, opts?: { retireAfter?: number; label?: string }): Promise<CreatedClient>;
+  // Throws on a public client, so the caller never narrows a value that cannot
+  // be the other case.
+  rotateSecret(clientId: string, opts?: { retireAfter?: number; label?: string })
+    : Promise<CreatedConfidentialClient>;
   update(clientId: string, patch: Partial<Omit<CreateClientSpec, 'clientId'>>): Promise<PublicClient>;
   list(query?: { status?: 'active' | 'disabled'; limit?: number; skip?: number })
     : Promise<{ items: PublicClient[]; limit: number }>;

@@ -11,7 +11,7 @@ import {
   testUser,
   type BuiltApp,
 } from './helpers.js';
-import type { CreatedClient } from '../types/index.js';
+import type { CreatedConfidentialClient } from '../types/index.js';
 
 /**
  * `tokenCache.ttlMs` — the one config key whose value is a security tradeoff
@@ -25,7 +25,7 @@ import type { CreatedClient } from '../types/index.js';
  */
 describe('introspection cache', () => {
   let built: BuiltApp;
-  let client: CreatedClient;
+  let client: CreatedConfidentialClient;
 
   beforeAll(startDb);
   afterAll(stopDb);

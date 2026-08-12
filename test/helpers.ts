@@ -9,8 +9,11 @@ import { createProtect } from '../src/server/protect.js';
 import { createDiscoveryRouter, createOAuthRouter } from '../src/server/routes/index.js';
 import { createClientsApi } from '../src/server/services/admin.js';
 import type {
+  CreateClientSpec,
   CreateOAuthHostConfig,
   CreatedClient,
+  CreatedConfidentialClient,
+  CreatedPublicClient,
   OAuthHostInstance,
   PackageUser,
 } from '../types/index.js';
@@ -142,19 +145,34 @@ export async function buildApp({ session, config = {} }: BuildAppOptions = {}): 
   return { app, ctx, state, clients: createClientsApi(ctx), protect: createProtect(ctx) };
 }
 
-/** Register a client with sensible defaults for the flow helper. */
+const CLIENT_DEFAULTS = {
+  name: 'Claude',
+  redirectUris: [REDIRECT_URI],
+  allowedScopes: ['openid', 'profile', 'email', 'contacts.read', 'contacts.write'],
+  allowedResources: [TEST_RESOURCE, OTHER_RESOURCE],
+  branding: { publisher: 'Anthropic' },
+} satisfies CreateClientSpec;
+
+/** Register a confidential client with sensible defaults for the flow helper. */
 export async function createTestClient(
   built: BuiltApp,
-  overrides: Partial<Parameters<BuiltApp['clients']['create']>[0]> = {},
-): Promise<CreatedClient> {
-  return built.clients.create({
-    name: 'Claude',
-    redirectUris: [REDIRECT_URI],
-    allowedScopes: ['openid', 'profile', 'email', 'contacts.read', 'contacts.write'],
-    allowedResources: [TEST_RESOURCE, OTHER_RESOURCE],
-    branding: { publisher: 'Anthropic' },
-    ...overrides,
-  });
+  overrides: Partial<Omit<CreateClientSpec, 'type'>> = {},
+): Promise<CreatedConfidentialClient> {
+  return built.clients.create({ ...CLIENT_DEFAULTS, ...overrides });
+}
+
+/**
+ * The same registration with no secret at all — `client_id` plus PKCE.
+ *
+ * Separate from `createTestClient` rather than an option on it, because the two
+ * return different shapes: a test that reaches for `clientSecret` on this one
+ * should not compile.
+ */
+export async function createPublicTestClient(
+  built: BuiltApp,
+  overrides: Partial<Omit<CreateClientSpec, 'type'>> = {},
+): Promise<CreatedPublicClient> {
+  return built.clients.create({ ...CLIENT_DEFAULTS, ...overrides, type: 'public' });
 }
 
 export interface Pkce {
@@ -260,7 +278,15 @@ export async function authorize(
   };
 }
 
-/** A form-encoded `/token` post with client authentication attached. */
+/**
+ * A form-encoded `/token` post with client authentication attached.
+ *
+ * A public client has no secret, and the wire form of that is
+ * `Basic base64(client_id:)` — an EMPTY password, which `readCredentials` reads
+ * as "no secret presented" rather than as the empty secret. Sending it that way
+ * here rather than special-casing the helper is deliberate: it is what a client
+ * configured with `token_endpoint_auth_method=none` actually sends.
+ */
 export function exchange(
   built: BuiltApp,
   client: CreatedClient,
@@ -269,8 +295,8 @@ export function exchange(
 ): request.Test {
   const req = request(built.app).post('/oauth/token').type('form');
   return authMethod === 'basic'
-    ? req.auth(client.clientId, client.clientSecret).send(fields)
-    : req.send({ ...fields, client_id: client.clientId, client_secret: client.clientSecret });
+    ? req.auth(client.clientId, client.clientSecret ?? '').send(fields)
+    : req.send({ ...fields, client_id: client.clientId, client_secret: client.clientSecret ?? '' });
 }
 
 /** Read a query parameter out of an absolute or root-relative URL. */

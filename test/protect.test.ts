@@ -13,7 +13,7 @@ import {
   testUser,
   type BuiltApp,
 } from './helpers.js';
-import type { CreatedClient } from '../types/index.js';
+import type { CreatedConfidentialClient } from '../types/index.js';
 
 /**
  * `oauth.protect()` — build plan §13 step 4.
@@ -28,7 +28,7 @@ import type { CreatedClient } from '../types/index.js';
  */
 describe('protect()', () => {
   let built: BuiltApp;
-  let client: CreatedClient;
+  let client: CreatedConfidentialClient;
 
   beforeAll(startDb);
   afterAll(stopDb);

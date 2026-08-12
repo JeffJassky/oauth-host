@@ -61,9 +61,11 @@ function clientSchema(): Schema<OAuthClientDoc> {
     {
       clientId: { type: String, required: true, unique: true },
       name: { type: String, required: true },
-      // `public` exists for CIMD clients, which hold no secret and are bound by
-      // PKCE instead. The enum was written with this widening in mind, so it
-      // was one member rather than a migration.
+      // `public` is a client that holds no secret and is bound by PKCE instead.
+      // Two ways in and they are independent: a CIMD row is written public, and
+      // `clients.create({ type: 'public' })` registers one by hand. The enum was
+      // written with this widening in mind, so it was one member rather than a
+      // migration.
       type: { type: String, enum: ['confidential', 'public'], default: 'confidential' },
       // How the row got here. A `cimd` row is re-derived from the client's own
       // metadata document, so this is what tells the re-fetch path which fields

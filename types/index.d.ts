@@ -400,9 +400,13 @@ export interface OAuthClientDoc {
   name: string;
   /**
    * `public` clients hold no secret and authenticate with `client_id` alone —
-   * PKCE is the binding that stands in for it. Only CIMD registrations are
-   * public today; a `confidential` client can never downgrade itself by
-   * omitting its secret.
+   * PKCE is the binding that stands in for it. A `confidential` client can
+   * never downgrade itself by omitting its secret.
+   *
+   * Orthogonal to `registration`: a CIMD row is always public, but a public row
+   * is not always CIMD. `clients.create({ type: 'public' })` registers one by
+   * hand, which is the only path open to a client that wants PKCE-only and
+   * publishes no metadata document (Codex CLI).
    */
   type: 'confidential' | 'public';
   /**
@@ -574,16 +578,65 @@ export interface CreateClientSpec {
   trusted?: boolean;
   /** Supply a fixed id for a re-provisioned client. Generated when omitted. */
   clientId?: string;
+  /**
+   * How this client authenticates at `/token`. **Defaults to `confidential`**,
+   * so an existing caller is unaffected.
+   *
+   * `public` generates no secret at all: the registration is `client_id` plus
+   * PKCE, `secrets` is empty, and `rotateSecret()` on it throws. Register one
+   * for a client that takes a `client_id` and nothing else — Codex CLI's MCP
+   * login has `oauth_client_id` and no `oauth_client_secret` field — and cannot
+   * use CIMD because it publishes no metadata document.
+   */
+  type?: 'confidential' | 'public';
 }
 
-export interface CreatedClient {
+/** What `clients.create({ type: 'confidential' })` and `rotateSecret()` return. */
+export interface CreatedConfidentialClient {
   client: PublicClient;
   clientId: string;
+  type: 'confidential';
   /** Returned once. Only its SHA-256 is stored; there is no way to read it back. */
   clientSecret: string;
 }
 
+/**
+ * What `clients.create({ type: 'public' })` returns.
+ *
+ * `clientSecret` is declared as `?: undefined` rather than omitted so that
+ * `created.clientSecret` still type-checks against the union below — and lands
+ * as `string | undefined`, which is what stops a provisioning script printing
+ * the word `undefined` into somebody's connector setup screen.
+ */
+export interface CreatedPublicClient {
+  client: PublicClient;
+  clientId: string;
+  type: 'public';
+  clientSecret?: undefined;
+}
+
+/**
+ * Discriminated on `type`, not a single interface with an optional secret.
+ *
+ * The alternative — widening `clientSecret` to `string | undefined` on one
+ * shape — reads as source-compatible and is not: `const s: string =
+ * created.clientSecret` stops compiling either way. The difference is what
+ * happens to the code that does not annotate. With an optional field a
+ * provisioning script keeps compiling and prints `undefined`; with a union the
+ * caller has to say which kind of registration it asked for before it can reach
+ * the secret at all.
+ */
+export type CreatedClient = CreatedConfidentialClient | CreatedPublicClient;
+
 export interface ClientsApi {
+  /**
+   * The overloads exist so the default path keeps its precise type. A spec with
+   * no `type` (or `type: 'confidential'`) returns a `clientSecret: string`
+   * exactly as before; only a caller that asked for `public`, or that passes a
+   * spec whose `type` is not known statically, has to narrow.
+   */
+  create(spec: CreateClientSpec & { type: 'public' }): Promise<CreatedPublicClient>;
+  create(spec: CreateClientSpec & { type?: 'confidential' }): Promise<CreatedConfidentialClient>;
   create(spec: CreateClientSpec): Promise<CreatedClient>;
   /**
    * Issue a second valid secret and retire the current one after `retireAfter`
@@ -591,9 +644,10 @@ export interface ClientsApi {
    * deployable without downtime.
    *
    * Throws on a **public** client. There is no secret to rotate, and returning
-   * one would hand the caller a credential the token endpoint refuses.
+   * one would hand the caller a credential the token endpoint refuses — which
+   * is also why the return type is the confidential member alone.
    */
-  rotateSecret(clientId: string, opts?: { retireAfter?: number; label?: string }): Promise<CreatedClient>;
+  rotateSecret(clientId: string, opts?: { retireAfter?: number; label?: string }): Promise<CreatedConfidentialClient>;
   update(clientId: string, patch: Partial<Omit<CreateClientSpec, 'clientId'>>): Promise<PublicClient>;
   list(query?: { status?: 'active' | 'disabled'; limit?: number; skip?: number }): Promise<{ items: PublicClient[]; limit: number }>;
   get(clientId: string): Promise<PublicClient | null>;

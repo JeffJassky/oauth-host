@@ -45,6 +45,21 @@ Both appear **only when CIMD is enabled**. Advertising `none` unconditionally
 would tell every client that secretless authentication is available, when the
 only clients that could use it are ones this server would refuse.
 
+::: warning Claude requires BOTH, and says nothing when one is missing
+Claude selects CIMD only when the authorization server advertises
+`"client_id_metadata_document_supported": true` **and** lists `"none"` in
+`token_endpoint_auth_methods_supported`. Either one alone is not enough. With
+only one present, Claude silently falls back to dynamic client registration —
+which this server does not implement — and the whole connection presents as a
+confusing DCR attempt with no mention of CIMD anywhere in it.
+
+This package emits the two together or not at all, so you cannot get this wrong
+through `clientIdMetadata`. It is named here because a reader hand-rolling
+discovery metadata somewhere else — a gateway rewriting the document, a
+static `/.well-known` file, a second authorization server — will get it wrong,
+and the failure gives no hint about which of the two flags is missing.
+:::
+
 ## What the client's document must contain
 
 Fetched from the `client_id` URL, `application/json`:
@@ -107,7 +122,43 @@ This is the most likely bug in the whole feature (revoke a client, its document
 gets re-fetched an hour later, it quietly reactivates) and there is a test named
 after exactly that failure.
 
-## Public clients
+## Public clients {#public-clients}
+
+**CIMD and "public" are two different things, and conflating them is the mistake
+this section exists to prevent.**
+
+| | Question it answers | Values |
+|---|---|---|
+| `registration` | **How the registration was discovered** | `manual` — you called `clients.create()`. `cimd` — derived from the client's own metadata document. |
+| `type` | **How the client authenticates at `/token`** | `confidential` — presents a secret. `public` — presents `client_id` alone, with PKCE standing in for the secret. |
+
+Every CIMD client is public, because a metadata document has no secret in it.
+The reverse does not hold: **a public client does not have to be a CIMD client.**
+
+Codex CLI is the counter-example, and it is why this distinction has to be
+written down. `codex mcp login` takes exactly three OAuth settings —
+`oauth_client_id`, `oauth_resource`, `bearer_token_env_var` — and there is no
+`oauth_client_secret` among them. It wants a public registration. But it
+publishes no metadata document anywhere, so CIMD cannot serve it: CIMD requires
+the *client* to host the document, and only some clients do (Claude does, at
+claude.ai; Codex does not). Left with neither, it falls through to dynamic
+registration and stops with `Dynamic client registration not supported`.
+
+The path for it is a public client registered by hand, with CIMD left off:
+
+```ts
+const { clientId } = await oauth.clients.create({
+  name: 'Codex CLI',
+  type: 'public',                                  // no secret is generated
+  redirectUris: ['http://localhost/callback'],     // loopback; the port may vary
+  allowedScopes: ['openid', 'contacts.read'],
+})
+// → { client, clientId, type: 'public' }   — there is no clientSecret to print
+```
+
+`type` defaults to `'confidential'`, so nothing you already wrote changes.
+
+### The two rules that make it safe
 
 A public client authenticates at `/token` by presenting `client_id` alone.
 There is no secret; **PKCE is what stands in for it**, and PKCE is already
@@ -124,9 +175,37 @@ downgradeable to public by anyone who knows a `client_id` — which is a public
 value by design. Both violations answer the identical `401 invalid_client`, so
 neither is an oracle for which kind of client an id names.
 
-`clients.rotateSecret()` on a public client **throws**. There is no secret to
+`clients.rotateSecret()` on a public client **throws**, whether it got there
+through CIMD or through `create({ type: 'public' })`. There is no secret to
 rotate, and returning one would hand a provisioning script a credential the
 token endpoint refuses.
+
+Refresh-token rotation is not optional for these clients either. It is the only
+protection a public client's refresh token has — there is no second credential
+an attacker would also need — so every refresh issues a new token and replaying
+a spent one kills the whole family.
+
+### One thing to know about discovery
+
+`"none"` appears in `token_endpoint_auth_methods_supported` when **CIMD** is
+enabled, not when a public client happens to be registered. A hand-registered
+public client therefore works on a server whose metadata never advertises
+`none`, which is fine for a client like Codex that is configured with a
+`client_id` rather than reading the document. A client that reads the metadata
+and refuses to proceed without `none` needs CIMD enabled as well.
+
+### Known gap: `private_key_jwt`
+
+OpenAI's documentation names `private_key_jwt` client assertions
+(RFC 7523 §2.2) as a CIMD capability — a client proving itself with a signed
+assertion against a key published in its metadata document, rather than with a
+shared secret or with nothing.
+
+**This package does not implement it.** `token_endpoint_auth_method` in a
+metadata document must be `none` or absent; a document naming
+`private_key_jwt` is refused with an error saying so, rather than being accepted
+and then ignored. It is recorded here as a known gap so it is not a silent one.
+Clients that offer it also accept `none`, which is the mode this server supports.
 
 ## Caching
 

@@ -32,13 +32,41 @@ const { client, clientId, clientSecret } = await oauth.clients.create({
   branding: { logoUrl: 'https://…/claude.png', publisher: 'Anthropic' },
   trusted: false,
   clientId: undefined,     // supply a fixed id for a re-provisioned client
+  type: 'confidential',    // the default; see below for 'public'
 });
 ```
 
-Returns `CreatedClient`: `{ client: PublicClient, clientId, clientSecret }`.
+Returns `{ client: PublicClient, clientId, type: 'confidential', clientSecret }`.
 
 **`clientSecret` is returned once.** Only its SHA-256 is stored; there is no way
 to read it back. Losing it means `rotateSecret()`.
+
+#### Registering a public client
+
+`type: 'public'` generates **no secret at all**. The registration is `client_id`
+plus PKCE, `secrets` is empty, and there is no `clientSecret` in the return
+value:
+
+```ts
+const { clientId } = await oauth.clients.create({
+  name: 'Codex CLI',
+  type: 'public',
+  redirectUris: ['http://localhost/callback'],
+  allowedScopes: ['openid', 'contacts.read'],
+});
+// → { client, clientId, type: 'public' }
+```
+
+Register one for a client that takes a client id and nothing else and publishes
+no metadata document — `codex mcp login` has `oauth_client_id` and no
+`oauth_client_secret`, and no document for CIMD to fetch. Public and CIMD are
+[independent](/guide/cimd#public-clients): this needs no `clientIdMetadata`
+config and makes no outbound request.
+
+The return type is a union discriminated on `type`, so a caller that does not
+know statically which kind it asked for has to narrow before reaching
+`clientSecret` — see [`CreatedClient`](/reference/types).
+`type` defaults to `'confidential'`, so every existing caller is unaffected.
 
 Validation, all with the offending value in the message:
 
@@ -50,6 +78,8 @@ Validation, all with the offending value in the message:
   otherwise registering a client would implicitly extend the catalog and the
   consent screen would have no label to render
 - `allowedResources`, when given, non-empty and all configured
+- `type`, when given, exactly `'confidential'` or `'public'` — a typo must not
+  silently fall back to one of them
 
 `redirectUris` is the field nothing downstream can rescue: `/authorize` compares
 by exact string equality, so a typo registered today is a partner integration
@@ -70,7 +100,8 @@ Issues a **second** valid secret and schedules the existing ones to retire after
 `retireAfter`. Two live secrets is what makes a rotation deployable without
 downtime.
 
-**Throws on a public client** ([CIMD](/guide/cimd#public-clients)) rather than
+**Throws on a [public client](/guide/cimd#public-clients)** — whether it got
+there through CIMD or through `create({ type: 'public' })` — rather than
 returning a secret it has no use for — the token endpoint refuses a public
 client that presents one, so a no-op here would hand a provisioning script a
 credential that breaks the client the moment it is used.
